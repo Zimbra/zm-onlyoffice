@@ -229,8 +229,12 @@
 	},
 	"services": {
 		"CoAuthoring": {
+			"ssl" :{
+                "key" : "",
+                "cert" : ""
+            },
 			"server": {
-				"port": 8000,
+				"port": 7084,
 				"workerpercpu": 1,
 				"mode": "development",
 				"limits_tempfile_upload": 104857600,
@@ -278,11 +282,11 @@
 				"limits_image_types_upload": "jpg;jpeg;jpe;png;gif;bmp;svg;tiff;tif"
 			},
 			"sql": {
-				"type": "postgres",
+				"type": "mysql",
 				"tableChanges": "doc_changes",
 				"tableResult": "task_result",
 				"dbHost": "localhost",
-				"dbPort": 5432,
+				"dbPort": 7306,
 				"dbName": "onlyoffice",
 				"dbUser": "onlyoffice",
 				"dbPass": "onlyoffice",
@@ -503,6 +507,22 @@
 				}
 				}
 			]
+		}
+	},
+	"FileStorage": {
+		"host": "",
+		"port": 4567,
+		"directory": "",
+		"silent": true
+	},
+	"SpellChecker": {
+		"ssl" :{
+            "key" : "",
+            "cert" : ""
+        },
+		"server": {
+			"port": 7085,
+			"mode": "development"
 		}
 	}
 }
