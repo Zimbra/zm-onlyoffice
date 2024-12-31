@@ -98,9 +98,10 @@ if (config.has('ssl')) {
 	const certificateKey = fs.readFileSync(config.get('ssl.cert')).toString();
 	//See detailed options format here: http://nodejs.org/api/tls.html#tls_tls_createserver_options_secureconnectionlistener
 	const options = {key: privateKey, cert: certificateKey};
-
+	operationContext.global.logger.warn('Express server is starting with SSL encryption. Ensure that the SSL key and certificate are correctly configured.');
 	server = https.createServer(options, app);
 } else {
+	operationContext.global.logger.warn('Express server is starting without SSL. This may expose traffic to potential security risks. Consider enabling SSL for production environments.');
 	server = http.createServer(app);
 }
 
