@@ -93,9 +93,9 @@ const app = express();
 
 let server = null;
 
-if (config.has('ssl')) {
-	const privateKey = fs.readFileSync(config.get('ssl.key')).toString();
-	const certificateKey = fs.readFileSync(config.get('ssl.cert')).toString();
+if (config.has('services.CoAuthoring.ssl')) {
+	const privateKey = fs.readFileSync(config.get('services.CoAuthoring.ssl.key')).toString();
+	const certificateKey = fs.readFileSync(config.get('services.CoAuthoring.ssl.cert')).toString();
 	//See detailed options format here: http://nodejs.org/api/tls.html#tls_tls_createserver_options_secureconnectionlistener
 	const options = {key: privateKey, cert: certificateKey};
 	operationContext.global.logger.warn('Express server is starting with SSL encryption. Ensure that the SSL key and certificate are correctly configured.');
