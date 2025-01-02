@@ -70,6 +70,8 @@ const cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enabl
 const cfgLicenseFile = config.get('license.license_file');
 const cfgDownloadMaxBytes = config.get('FileConverter.converter.maxDownloadBytes');
 
+const errorhandler = require('errorhandler');
+
 if (false) {
 	var cluster = require('cluster');
 	cluster.schedulingPolicy = cluster.SCHED_RR
@@ -186,6 +188,7 @@ docsCoServer.install(server, () => {
 	});
 
 	app.use('/', staticRouter);
+	app.use(errorhandler());
 
 	const rawFileParser = bodyParser.raw(
 		{inflate: true, limit: config.get('services.CoAuthoring.server.limits_tempfile_upload'), type: function() {return true;}});
