@@ -57,10 +57,7 @@ const commonDefines = require('./../../Common/sources/commondefines');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
 const staticRouter = require('./routes/static');
-const infoRouter = require('./routes/info');
 const ms = require('ms');
-const aiProxyHandler = require('./ai/aiProxyHandler');
-const runtimeConfigManager = require('./../../Common/sources/runtimeConfigManager');
 
 const cfgWopiEnable = config.get('wopi.enable');
 const cfgWopiDummyEnable = config.get('wopi.dummy.enable');
@@ -91,7 +88,6 @@ const cfgDownloadMaxBytes = config.get('FileConverter.converter.maxDownloadBytes
 // }
 
 const app = express();
-app.disable('x-powered-by');
 
 // Enable CORS in development mode for AdminPanel webpack dev server
 if (process.env.NODE_ENV.startsWith('development-')) {
@@ -107,9 +103,19 @@ if (process.env.NODE_ENV.startsWith('development-')) {
 }
 
 //path.resolve uses __dirname by default(unexpected path in pkg)
-app.set('views', path.resolve(process.cwd(), cfgHtmlTemplate));
-app.set('view engine', 'ejs');
-const server = http.createServer(app);
+
+let server = null;
+
+if (config.has('services.CoAuthoring.ssl')) {
+  const privateKey = fs.readFileSync(config.get('services.CoAuthoring.ssl.key')).toString();
+  const certificateKey = fs.readFileSync(config.get('services.CoAuthoring.ssl.cert')).toString();
+  //See detailed options format here: http://nodejs.org/api/tls.html#tls_tls_createserver_options_secureconnectionlistener
+  const options = {key: privateKey, cert: certificateKey};
+
+  server = https.createServer(options, app);
+} else {
+  server = http.createServer(app);
+}
 
 let licenseInfo, licenseOriginal, updatePluginsTime, userPlugins;
 const updatePluginsCacheExpire = ms('5m');

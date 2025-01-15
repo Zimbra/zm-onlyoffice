@@ -1,0 +1,70 @@
+{
+  "log": {
+    "filePath": "/opt/zimbra/onlyoffice/documentserver/server/Common/config/log4js/logconfig.json"
+  },
+  "storage": {
+    "fs": {
+      "folderPath": "/opt/zimbra/onlyoffice/documentserver/App_Data/cache/files"
+    }
+  },
+  "services": {
+    "CoAuthoring": {
+      "server": {
+        "static_content": {
+          "/fonts": {
+            "path": "/opt/zimbra/onlyoffice/documentserver/fonts",
+            "options": {"maxAge": "7d"}
+          },
+          "/sdkjs": {
+            "path": "/opt/zimbra/onlyoffice/documentserver/sdkjs",
+            "options": {"maxAge": "7d"}
+          },
+          "/web-apps": {
+            "path": "/opt/zimbra/onlyoffice/documentserver/web-apps",
+            "options": {"maxAge": "7d"}
+          },
+          "/sdkjs-plugins": {
+            "path": "/opt/zimbra/onlyoffice/documentserver/sdkjs-plugins",
+            "options": {"maxAge": "7d"}
+          },
+          "/App_Data": {
+            "path": "/opt/zimbra/onlyoffice/documentserver/App_Data",
+            "options": {"maxAge": "7d"}
+          }
+        }
+      },
+      "utils": {
+        "utils_common_fontdir": "/usr/share/fonts"
+      },
+      "request-filtering-agent" : {
+        "allowPrivateIPAddress": true,
+        "allowMetaIPAddress": true
+      },
+      "sockjs": {
+        "sockjs_url": "/opt/zimbra/onlyoffice/documentserver/web-apps/vendor/sockjs/sockjs.min.js"
+      }
+    }
+  },
+  "license": {
+    "license_file": "/opt/zimbra/onlyoffice/documentserver/license.lic",
+    "warning_limit_percents": 70,
+    "packageType": 0
+  },
+  "FileConverter": {
+    "converter": {
+      "fontDir": "/usr/share/fonts",
+      "presentationThemesDir": "/opt/zimbra/onlyoffice/documentserver/sdkjs/slide/themes",
+      "x2tPath": "/opt/zimbra/onlyoffice/documentserver/server/FileConverter/bin/x2t",
+      "docbuilderPath": "/opt/zimbra/onlyoffice/documentserver/server/FileConverter/bin/docbuilder",
+      "docbuilderAllFontsPath": "/opt/zimbra/onlyoffice/documentserver/App_Data/docbuilder/AllFonts.js"
+    }
+  },
+  "FileStorage": {
+    "directory": "/opt/zimbra/onlyoffice/documentserver/App_Data"
+  },
+  "SpellChecker": {
+    "server": {
+      "dictDir": "/opt/zimbra/onlyoffice/documentserver/dictionaries"
+    }
+  }
+}

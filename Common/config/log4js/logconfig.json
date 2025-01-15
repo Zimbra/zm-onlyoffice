@@ -1,0 +1,15 @@
+{
+	"appenders": {
+		"default": {
+			"type": "file",
+			"filename": "/opt/zimbra/log/onlyoffice.log",
+			"layout": {
+				"type": "pattern",
+				"pattern": "%[[%d] [%p] [%X{TENANT}] [%X{DOCID}] [%X{USERID}] %c -%] %.10000m"
+			}
+		}
+	},
+	"categories": {
+		"default": { "appenders": [ "default" ], "level": "WARN" }
+	}
+}
