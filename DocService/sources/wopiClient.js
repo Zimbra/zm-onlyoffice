@@ -32,24 +32,23 @@
 
 'use strict';
 
-const path = require('path');
-const { pipeline } = require('node:stream/promises');
 const crypto = require('crypto');
-let util = require('util');
+const path = require('path');
+const {pipeline} = require('node:stream/promises');
 const {URL} = require('url');
 const co = require('co');
 const jwt = require('jsonwebtoken');
 const config = require('config');
-const { createReadStream } = require('fs');
-const { stat, lstat, readdir } = require('fs/promises');
+const {createReadStream} = require('fs');
+const {stat, lstat, readdir} = require('fs/promises');
 const utf7 = require('utf7');
 const mimeDB = require('mime-db');
 const xmlbuilder2 = require('xmlbuilder2');
-const logger = require('./../../Common/sources/logger');
 const utils = require('./../../Common/sources/utils');
 const constants = require('./../../Common/sources/constants');
 const commonDefines = require('./../../Common/sources/commondefines');
-const formatChecker = require('./../../Common/sources/formatchecker');
+const wopiUtils = require('./wopiUtils');
+const documentFormats = require('./../../Common/sources/documentFormats');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
 const sqlBase = require('./databaseConnectors/baseConnector');
@@ -57,14 +56,13 @@ const taskResult = require('./taskresult');
 const canvasService = require('./canvasservice');
 const converterService = require('./converterservice');
 const mime = require('mime');
+const license = require('./../../Common/sources/license');
 
 const cfgTokenOutboxAlgorithm = config.get('services.CoAuthoring.token.outbox.algorithm');
 const cfgTokenOutboxExpires = config.get('services.CoAuthoring.token.outbox.expires');
-const cfgTokenEnableBrowser = config.get('services.CoAuthoring.token.enable.browser');
 const cfgCallbackRequestTimeout = config.get('services.CoAuthoring.server.callbackRequestTimeout');
 const cfgNewFileTemplate = config.get('services.CoAuthoring.server.newFileTemplate');
 const cfgDownloadTimeout = config.get('FileConverter.converter.downloadTimeout');
-const cfgMaxDownloadBytes = config.get('FileConverter.converter.maxDownloadBytes');
 const cfgWopiFileInfoBlockList = config.get('wopi.fileInfoBlockList');
 const cfgWopiWopiZone = config.get('wopi.wopiZone');
 const cfgWopiPdfView = config.get('wopi.pdfView');
@@ -75,56 +73,61 @@ const cfgWopiCellView = config.get('wopi.cellView');
 const cfgWopiCellEdit = config.get('wopi.cellEdit');
 const cfgWopiSlideView = config.get('wopi.slideView');
 const cfgWopiSlideEdit = config.get('wopi.slideEdit');
+const cfgWopiDiagramView = config.get('wopi.diagramView');
+const cfgWopiDiagramEdit = config.get('wopi.diagramEdit');
 const cfgWopiForms = config.get('wopi.forms');
 const cfgWopiFavIconUrlWord = config.get('wopi.favIconUrlWord');
 const cfgWopiFavIconUrlCell = config.get('wopi.favIconUrlCell');
 const cfgWopiFavIconUrlSlide = config.get('wopi.favIconUrlSlide');
 const cfgWopiFavIconUrlPdf = config.get('wopi.favIconUrlPdf');
+const cfgWopiFavIconUrlDiagram = config.get('wopi.favIconUrlDiagram');
 const cfgWopiPublicKey = config.get('wopi.publicKey');
 const cfgWopiModulus = config.get('wopi.modulus');
 const cfgWopiExponent = config.get('wopi.exponent');
-const cfgWopiPrivateKey = config.get('wopi.privateKey');
 const cfgWopiPublicKeyOld = config.get('wopi.publicKeyOld');
 const cfgWopiModulusOld = config.get('wopi.modulusOld');
 const cfgWopiExponentOld = config.get('wopi.exponentOld');
-const cfgWopiPrivateKeyOld = config.get('wopi.privateKeyOld');
 const cfgWopiHost = config.get('wopi.host');
 const cfgWopiDummySampleFilePath = config.get('wopi.dummy.sampleFilePath');
-
-let cryptoSign = util.promisify(crypto.sign);
+const cfgDocumentFormatsFile = config.get('services.CoAuthoring.server.documentFormatsFile');
 
 let templatesFolderLocalesCache = null;
 let templatesFolderExtsCache = null;
 const templateFilesSizeCache = {};
 let shutdownFlag = false;
 
-let mimeTypesByExt = (function() {
-  let mimeTypesByExt = {};
-  for (let mimeType in mimeDB) {
-    if (mimeDB.hasOwnProperty(mimeType)) {
-      let val = mimeDB[mimeType];
+//patch mimeDB
+if (!mimeDB['application/vnd.visio2013']) {
+  mimeDB['application/vnd.visio2013'] = {extensions: ['vsdx', 'vstx', 'vssx', 'vsdm', 'vstm', 'vssm']};
+}
+
+const mimeTypesByExt = (function () {
+  const mimeTypesByExt = {};
+  for (const mimeType in mimeDB) {
+    if (Object.hasOwn(mimeDB, mimeType)) {
+      const val = mimeDB[mimeType];
       if (val.extensions) {
-        val.extensions.forEach((value) => {
+        val.extensions.forEach(value => {
           if (!mimeTypesByExt[value]) {
             mimeTypesByExt[value] = [];
           }
           mimeTypesByExt[value].push(mimeType);
-        })
+        });
       }
     }
   }
   return mimeTypesByExt;
 })();
 
-async function getTemplatesFolderExts(ctx){
+async function getTemplatesFolderExts(ctx) {
   //find available template files
   if (templatesFolderExtsCache === null) {
     const tenNewFileTemplate = ctx.getCfg('services.CoAuthoring.server.newFileTemplate', cfgNewFileTemplate);
-    const dirContent = await readdir(`${tenNewFileTemplate}/${constants.TEMPLATES_DEFAULT_LOCALE}/`, { withFileTypes: true });
+    const dirContent = await readdir(`${tenNewFileTemplate}/${constants.TEMPLATES_DEFAULT_LOCALE}/`, {withFileTypes: true});
     templatesFolderExtsCache = dirContent
       .filter(dirObject => dirObject.isFile())
-      .reduce((result, item, index, array) => {
-        let ext = path.extname(item.name).substring(1);
+      .reduce((result, item) => {
+        const ext = path.extname(item.name).substring(1);
         result[ext] = ext;
         return result;
       }, {});
@@ -133,27 +136,37 @@ async function getTemplatesFolderExts(ctx){
 }
 
 function discovery(req, res) {
-  return co(function*() {
+  return co(function* () {
     const xml = xmlbuilder2.create({version: '1.0', encoding: 'utf-8'});
-    let ctx = new operationContext.Context();
+    const ctx = new operationContext.Context();
     try {
       ctx.initFromRequest(req);
       yield ctx.initTenantCache();
       ctx.logger.info('wopiDiscovery start');
       const tenWopiWopiZone = ctx.getCfg('wopi.wopiZone', cfgWopiWopiZone);
-      const tenWopiPdfView = ctx.getCfg('wopi.pdfView', cfgWopiPdfView);
-      const tenWopiPdfEdit = ctx.getCfg('wopi.pdfEdit', cfgWopiPdfEdit);
-      const tenWopiWordView = ctx.getCfg('wopi.wordView', cfgWopiWordView);
-      const tenWopiWordEdit = ctx.getCfg('wopi.wordEdit', cfgWopiWordEdit);
-      const tenWopiCellView = ctx.getCfg('wopi.cellView', cfgWopiCellView);
-      const tenWopiCellEdit = ctx.getCfg('wopi.cellEdit', cfgWopiCellEdit);
-      const tenWopiSlideView = ctx.getCfg('wopi.slideView', cfgWopiSlideView);
-      const tenWopiSlideEdit = ctx.getCfg('wopi.slideEdit', cfgWopiSlideEdit);
-      const tenWopiForms = ctx.getCfg('wopi.forms', cfgWopiForms);
+      // Get formats from JSON file, with config override if non-empty array
+      const tenDocumentFormatsFile = ctx.getCfg('services.CoAuthoring.server.documentFormatsFile', cfgDocumentFormatsFile);
+      const formats = yield documentFormats.getAllFormats(tenDocumentFormatsFile);
+      const getFormats = (cfgKey, cfgDefault, fileKey) => {
+        const cfgValue = ctx.getCfg(cfgKey, cfgDefault);
+        return Array.isArray(cfgValue) && cfgValue.length > 0 ? cfgValue : formats[fileKey];
+      };
+      const tenWopiPdfView = getFormats('wopi.pdfView', cfgWopiPdfView, 'pdfView');
+      const tenWopiPdfEdit = getFormats('wopi.pdfEdit', cfgWopiPdfEdit, 'pdfEdit');
+      const tenWopiWordView = getFormats('wopi.wordView', cfgWopiWordView, 'wordView');
+      const tenWopiWordEdit = getFormats('wopi.wordEdit', cfgWopiWordEdit, 'wordEdit');
+      const tenWopiCellView = getFormats('wopi.cellView', cfgWopiCellView, 'cellView');
+      const tenWopiCellEdit = getFormats('wopi.cellEdit', cfgWopiCellEdit, 'cellEdit');
+      const tenWopiSlideView = getFormats('wopi.slideView', cfgWopiSlideView, 'slideView');
+      const tenWopiSlideEdit = getFormats('wopi.slideEdit', cfgWopiSlideEdit, 'slideEdit');
+      const tenWopiDiagramView = getFormats('wopi.diagramView', cfgWopiDiagramView, 'diagramView');
+      const tenWopiDiagramEdit = getFormats('wopi.diagramEdit', cfgWopiDiagramEdit, 'diagramEdit');
+      const tenWopiForms = getFormats('wopi.forms', cfgWopiForms, 'forms');
       const tenWopiFavIconUrlWord = ctx.getCfg('wopi.favIconUrlWord', cfgWopiFavIconUrlWord);
       const tenWopiFavIconUrlCell = ctx.getCfg('wopi.favIconUrlCell', cfgWopiFavIconUrlCell);
       const tenWopiFavIconUrlSlide = ctx.getCfg('wopi.favIconUrlSlide', cfgWopiFavIconUrlSlide);
-      const tenWopiFavIconUrlPdf = ctx.getCfg('wopi.favIconUrlSlide', cfgWopiFavIconUrlPdf);
+      const tenWopiFavIconUrlPdf = ctx.getCfg('wopi.favIconUrlPdf', cfgWopiFavIconUrlPdf);
+      const tenWopiFavIconUrlDiagram = ctx.getCfg('wopi.favIconUrlDiagram', cfgWopiFavIconUrlDiagram);
       const tenWopiPublicKey = ctx.getCfg('wopi.publicKey', cfgWopiPublicKey);
       const tenWopiModulus = ctx.getCfg('wopi.modulus', cfgWopiModulus);
       const tenWopiExponent = ctx.getCfg('wopi.exponent', cfgWopiExponent);
@@ -162,50 +175,60 @@ function discovery(req, res) {
       const tenWopiExponentOld = ctx.getCfg('wopi.exponentOld', cfgWopiExponentOld);
       const tenWopiHost = ctx.getCfg('wopi.host', cfgWopiHost);
 
-      let baseUrl = tenWopiHost || utils.getBaseUrlByRequest(ctx, req);
-      let names = ['Word','Excel','PowerPoint','Pdf'];
-      let favIconUrls = [tenWopiFavIconUrlWord, tenWopiFavIconUrlCell, tenWopiFavIconUrlSlide, tenWopiFavIconUrlPdf];
-      let exts = [
+      const baseUrl = tenWopiHost || utils.getBaseUrlByRequest(ctx, req);
+      const names = ['Word', 'Excel', 'PowerPoint', 'Pdf'];
+      const favIconUrls = [tenWopiFavIconUrlWord, tenWopiFavIconUrlCell, tenWopiFavIconUrlSlide, tenWopiFavIconUrlPdf];
+      const exts = [
         {targetext: 'docx', view: tenWopiWordView, edit: tenWopiWordEdit},
         {targetext: 'xlsx', view: tenWopiCellView, edit: tenWopiCellEdit},
         {targetext: 'pptx', view: tenWopiSlideView, edit: tenWopiSlideEdit},
         {targetext: null, view: tenWopiPdfView, edit: tenWopiPdfEdit}
       ];
-      let documentTypes = [`word`, `cell`, `slide`, `pdf`];
+      const documentTypes = [`word`, `cell`, `slide`, `pdf`];
+      //todo check sdkjs-ooxml addon
+      const addVisio =
+        (tenWopiDiagramView.length > 0 || tenWopiDiagramEdit.length > 0) &&
+        (constants.PACKAGE_TYPE_OS !== license.packageType || process.env?.NODE_ENV?.startsWith('development-'));
+      if (addVisio) {
+        names.push('Visio');
+        favIconUrls.push(tenWopiFavIconUrlDiagram);
+        exts.push({targetext: null, view: tenWopiDiagramView, edit: tenWopiDiagramEdit});
+        documentTypes.push(`diagram`);
+      }
 
-      let templatesFolderExtsCache = yield getTemplatesFolderExts(ctx);
-      let formsExts = tenWopiForms.reduce((result, item, index, array) => {
+      const templatesFolderExtsCache = yield getTemplatesFolderExts(ctx);
+      const formsExts = tenWopiForms.reduce((result, item) => {
         result[item] = item;
         return result;
       }, {});
 
-      let templateStart = `${baseUrl}/hosting/wopi`;
+      const templateStart = `${baseUrl}/hosting/wopi`;
       let templateEnd = `&lt;rs=DC_LLCC&amp;&gt;&lt;dchat=DISABLE_CHAT&amp;&gt;&lt;embed=EMBEDDED&amp;&gt;`;
       templateEnd += `&lt;fs=FULLSCREEN&amp;&gt;&lt;hid=HOST_SESSION_ID&amp;&gt;&lt;rec=RECORDING&amp;&gt;`;
       templateEnd += `&lt;sc=SESSION_CONTEXT&amp;&gt;&lt;thm=THEME_ID&amp;&gt;&lt;ui=UI_LLCC&amp;&gt;`;
       templateEnd += `&lt;wopisrc=WOPI_SOURCE&amp;&gt;&amp;`;
-      let xmlZone = xml.ele('wopi-discovery').ele('net-zone', { name: tenWopiWopiZone });
+      const xmlZone = xml.ele('wopi-discovery').ele('net-zone', {name: tenWopiWopiZone});
       //start section for MS WOPI connectors
-      for(let i = 0; i < names.length; ++i) {
-        let name = names[i];
+      for (let i = 0; i < names.length; ++i) {
+        const name = names[i];
         let favIconUrl = favIconUrls[i];
         if (!(favIconUrl.startsWith('http://') || favIconUrl.startsWith('https://'))) {
           favIconUrl = baseUrl + favIconUrl;
         }
-        let ext = exts[i];
-        let urlTemplateView = `${templateStart}/${documentTypes[i]}/view?${templateEnd}`;
-        let urlTemplateEmbedView = `${templateStart}/${documentTypes[i]}/view?embed=1&amp;${templateEnd}`;
-        let urlTemplateMobileView = `${templateStart}/${documentTypes[i]}/view?mobile=1&amp;${templateEnd}`;
-        let urlTemplateEdit = `${templateStart}/${documentTypes[i]}/edit?${templateEnd}`;
-        let urlTemplateMobileEdit = `${templateStart}/${documentTypes[i]}/edit?mobile=1&amp;${templateEnd}`;
-        let urlTemplateFormSubmit = `${templateStart}/${documentTypes[i]}/edit?formsubmit=1&amp;${templateEnd}`;
-        let xmlApp = xmlZone.ele('app', {name: name, favIconUrl: favIconUrl});
+        const ext = exts[i];
+        const urlTemplateView = `${templateStart}/${documentTypes[i]}/view?${templateEnd}`;
+        const urlTemplateEmbedView = `${templateStart}/${documentTypes[i]}/view?embed=1&amp;${templateEnd}`;
+        const urlTemplateMobileView = `${templateStart}/${documentTypes[i]}/view?mobile=1&amp;${templateEnd}`;
+        const urlTemplateEdit = `${templateStart}/${documentTypes[i]}/edit?${templateEnd}`;
+        const urlTemplateMobileEdit = `${templateStart}/${documentTypes[i]}/edit?mobile=1&amp;${templateEnd}`;
+        const urlTemplateFormSubmit = `${templateStart}/${documentTypes[i]}/edit?formsubmit=1&amp;${templateEnd}`;
+        const xmlApp = xmlZone.ele('app', {name, favIconUrl});
         for (let j = 0; j < ext.view.length; ++j) {
           xmlApp.ele('action', {name: 'view', ext: ext.view[j], default: 'true', urlsrc: urlTemplateView}).up();
           xmlApp.ele('action', {name: 'embedview', ext: ext.view[j], urlsrc: urlTemplateEmbedView}).up();
           xmlApp.ele('action', {name: 'mobileView', ext: ext.view[j], urlsrc: urlTemplateMobileView}).up();
           if (ext.targetext) {
-            let urlConvert = `${templateStart}/convert-and-edit/${ext.view[j]}/${ext.targetext}?${templateEnd}`;
+            const urlConvert = `${templateStart}/convert-and-edit/${ext.view[j]}/${ext.targetext}?${templateEnd}`;
             xmlApp.ele('action', {name: 'convert', ext: ext.view[j], targetext: ext.targetext, requires: 'update', urlsrc: urlConvert}).up();
           }
         }
@@ -228,35 +251,47 @@ function discovery(req, res) {
       }
       //end section for MS WOPI connectors
       //start section for collabora nexcloud connectors
-      for(let i = 0; i < exts.length; ++i) {
-        let ext = exts[i];
-        let urlTemplateView = `${templateStart}/${documentTypes[i]}/view?${templateEnd}`;
-        let urlTemplateEmbedView = `${templateStart}/${documentTypes[i]}/view?embed=1&amp;${templateEnd}`;
-        let urlTemplateMobileView = `${templateStart}/${documentTypes[i]}/view?mobile=1&amp;${templateEnd}`;
-        let urlTemplateEdit = `${templateStart}/${documentTypes[i]}/edit?${templateEnd}`;
-        let urlTemplateMobileEdit = `${templateStart}/${documentTypes[i]}/edit?mobile=1&amp;${templateEnd}`;
-        let urlTemplateFormSubmit = `${templateStart}/${documentTypes[i]}/edit?formsubmit=1&amp;${templateEnd}`;
+      for (let i = 0; i < exts.length; ++i) {
+        const ext = exts[i];
+        const urlTemplateView = `${templateStart}/${documentTypes[i]}/view?${templateEnd}`;
+        const urlTemplateEmbedView = `${templateStart}/${documentTypes[i]}/view?embed=1&amp;${templateEnd}`;
+        const urlTemplateMobileView = `${templateStart}/${documentTypes[i]}/view?mobile=1&amp;${templateEnd}`;
+        const urlTemplateEdit = `${templateStart}/${documentTypes[i]}/edit?${templateEnd}`;
+        const urlTemplateMobileEdit = `${templateStart}/${documentTypes[i]}/edit?mobile=1&amp;${templateEnd}`;
+        const urlTemplateFormSubmit = `${templateStart}/${documentTypes[i]}/edit?formsubmit=1&amp;${templateEnd}`;
+        const mimeTypesDuplicate = new Set(); //to remove duplicates for each editor(allow html for word and excel)
         for (let j = 0; j < ext.view.length; ++j) {
-          let mimeTypes = mimeTypesByExt[ext.view[j]];
+          const mimeTypes = mimeTypesByExt[ext.view[j]];
           if (mimeTypes) {
-            mimeTypes.forEach((value) => {
-              let xmlApp = xmlZone.ele('app', {name: value});
+            mimeTypes.forEach(value => {
+              if (mimeTypesDuplicate.has(value)) {
+                return;
+              } else {
+                mimeTypesDuplicate.add(value);
+              }
+              const xmlApp = xmlZone.ele('app', {name: value});
               xmlApp.ele('action', {name: 'view', ext: '', default: 'true', urlsrc: urlTemplateView}).up();
               xmlApp.ele('action', {name: 'embedview', ext: '', urlsrc: urlTemplateEmbedView}).up();
               xmlApp.ele('action', {name: 'mobileView', ext: '', urlsrc: urlTemplateMobileView}).up();
               if (ext.targetext) {
-                let urlConvert = `${templateStart}/convert-and-edit/${ext.view[j]}/${ext.targetext}?${templateEnd}`;
+                const urlConvert = `${templateStart}/convert-and-edit/${ext.view[j]}/${ext.targetext}?${templateEnd}`;
                 xmlApp.ele('action', {name: 'convert', ext: '', targetext: ext.targetext, requires: 'update', urlsrc: urlConvert}).up();
               }
               xmlApp.up();
             });
           }
         }
+        mimeTypesDuplicate.clear();
         for (let j = 0; j < ext.edit.length; ++j) {
-          let mimeTypes = mimeTypesByExt[ext.edit[j]];
+          const mimeTypes = mimeTypesByExt[ext.edit[j]];
           if (mimeTypes) {
-            mimeTypes.forEach((value) => {
-              let xmlApp = xmlZone.ele('app', {name: value});
+            mimeTypes.forEach(value => {
+              if (mimeTypesDuplicate.has(value)) {
+                return;
+              } else {
+                mimeTypesDuplicate.add(value);
+              }
+              const xmlApp = xmlZone.ele('app', {name: value});
               if (formsExts[ext.edit[j]]) {
                 xmlApp.ele('action', {name: 'edit', ext: '', default: 'true', requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
                 xmlApp.ele('action', {name: 'formsubmit', ext: '', requires: 'locks,update', urlsrc: urlTemplateFormSubmit}).up();
@@ -272,18 +307,24 @@ function discovery(req, res) {
           }
         }
       }
-      let xmlApp = xmlZone.ele('app', {name: 'Capabilities'});
+      const xmlApp = xmlZone.ele('app', {name: 'Capabilities'});
       xmlApp.ele('action', {ext: '', name: 'getinfo', requires: 'locks,update', urlsrc: `${baseUrl}/hosting/capabilities`}).up();
       xmlApp.up();
       //end section for collabora nexcloud connectors
-      let xmlDiscovery = xmlZone.up();
+      const xmlDiscovery = xmlZone.up();
       if (tenWopiPublicKeyOld && tenWopiPublicKey) {
-        let exponent = numberToBase64(tenWopiExponent);
-        let exponentOld = numberToBase64(tenWopiExponentOld);
-        xmlDiscovery.ele('proof-key', {
-          oldvalue: tenWopiPublicKeyOld, oldmodulus: tenWopiModulusOld, oldexponent: exponentOld,
-          value: tenWopiPublicKey, modulus: tenWopiModulus, exponent: exponent
-        }).up();
+        const exponent = numberToBase64(tenWopiExponent);
+        const exponentOld = numberToBase64(tenWopiExponentOld);
+        xmlDiscovery
+          .ele('proof-key', {
+            oldvalue: tenWopiPublicKeyOld,
+            oldmodulus: tenWopiModulusOld,
+            oldexponent: exponentOld,
+            value: tenWopiPublicKey,
+            modulus: tenWopiModulus,
+            exponent
+          })
+          .up();
       }
       xmlDiscovery.up();
     } catch (err) {
@@ -296,12 +337,16 @@ function discovery(req, res) {
   });
 }
 function collaboraCapabilities(req, res) {
-  return co(function*() {
-    let output = {
-      "convert-to": {"available": true, "endpoint":"/lool/convert-to"}, "hasMobileSupport": true, "hasProxyPrefix": false, "hasTemplateSaveAs": false,
-      "hasTemplateSource": true, "productVersion": commonDefines.buildVersion
+  return co(function* () {
+    const output = {
+      'convert-to': {available: true, endpoint: '/lool/convert-to'},
+      hasMobileSupport: true,
+      hasProxyPrefix: false,
+      hasTemplateSaveAs: false,
+      hasTemplateSource: true,
+      productVersion: commonDefines.buildVersion
     };
-    let ctx = new operationContext.Context();
+    const ctx = new operationContext.Context();
     try {
       ctx.initFromRequest(req);
       yield ctx.initTenantCache();
@@ -309,21 +354,21 @@ function collaboraCapabilities(req, res) {
     } catch (err) {
       ctx.logger.error('collaboraCapabilities error:%s', err.stack);
     } finally {
-      utils.fillResponseSimple(res, JSON.stringify(output), "application/json");
+      utils.fillResponseSimple(res, JSON.stringify(output), 'application/json');
       ctx.logger.info('collaboraCapabilities end');
     }
   });
 }
 function isWopiCallback(url) {
-  return url && url.startsWith("{");
+  return url && url.startsWith('{');
 }
 function isWopiUnlockMarker(url) {
   return isWopiCallback(url) && !!JSON.parse(url).unlockId;
 }
 function isWopiModifiedMarker(url) {
   if (isWopiCallback(url)) {
-    let obj = JSON.parse(url);
-    return obj.fileInfo && obj.fileInfo.LastModifiedTime
+    const obj = JSON.parse(url);
+    return obj.fileInfo && obj.fileInfo.LastModifiedTime;
   }
 }
 function getWopiUnlockMarker(wopiParams) {
@@ -336,26 +381,43 @@ function getWopiModifiedMarker(wopiParams, lastModifiedTime) {
   return JSON.stringify(Object.assign({fileInfo: {LastModifiedTime: lastModifiedTime}}, wopiParams.userAuth));
 }
 function getFileTypeByInfo(fileInfo) {
-  let fileType = fileInfo.BaseFileName ? fileInfo.BaseFileName.substr(fileInfo.BaseFileName.lastIndexOf('.') + 1) : "";
+  let fileType = fileInfo.BaseFileName ? fileInfo.BaseFileName.substr(fileInfo.BaseFileName.lastIndexOf('.') + 1) : '';
   fileType = fileInfo.FileExtension ? fileInfo.FileExtension.substr(1) : fileType;
   return fileType.toLowerCase();
 }
-async function getWopiFileUrl(ctx, fileInfo, userAuth) {
-  const tenMaxDownloadBytes = ctx.getCfg('FileConverter.converter.maxDownloadBytes', cfgMaxDownloadBytes);
-  let url;
-  let headers = {'X-WOPI-MaxExpectedSize': tenMaxDownloadBytes};
-  if (fileInfo?.FileUrl) {
-    //Requests to the FileUrl can not be signed using proof keys. The FileUrl is used exactly as provided by the host, so it does not necessarily include the access token, which is required to construct the expected proof.
-    url = fileInfo.FileUrl;
-  } else if (fileInfo?.TemplateSource) {
-    url = fileInfo.TemplateSource;
-  } else if (userAuth) {
-    url = `${userAuth.wopiSrc}/contents?access_token=${userAuth.access_token}`;
-    await fillStandardHeaders(ctx, headers, url, userAuth.access_token);
+
+/**
+ * Returns WOPI spec-compliant error message for HTTP status code
+ * @param {number} statusCode - HTTP status code
+ * @returns {string} Error message according to WOPI specification
+ */
+function getWopiErrorMessage(statusCode) {
+  switch (statusCode) {
+    case 400:
+      return 'Bad Request - malformed or invalid request';
+    case 401:
+      return 'Invalid access token';
+    case 403:
+      return 'Access forbidden';
+    case 404:
+      return 'Resource not found or user unauthorized';
+    case 409:
+      return 'Conflict - lock mismatch or file version conflict';
+    case 412:
+      return 'Precondition Failed - lock token mismatch';
+    case 413:
+      return 'Payload Too Large - file size exceeds limits';
+    case 500:
+      return 'Internal server error or invalid proof keys';
+    case 501:
+      return 'Not Implemented - operation not supported';
+    case 507:
+      return 'Insufficient Storage - not enough storage space';
+    default:
+      return 'Unknown error';
   }
-  ctx.logger.debug('getWopiFileUrl url=%s; headers=%j', url, headers);
-  return {url, headers};
 }
+
 function isWopiJwtToken(decoded) {
   return !!decoded.fileInfo;
 }
@@ -364,8 +426,8 @@ function setIsShutdown(val) {
 }
 function getLastModifiedTimeFromCallbacks(callbacks) {
   for (let i = callbacks.length; i >= 0; --i) {
-    let callback = callbacks[i];
-    let lastModifiedTime = isWopiModifiedMarker(callback);
+    const callback = callbacks[i];
+    const lastModifiedTime = isWopiModifiedMarker(callback);
     if (lastModifiedTime) {
       return lastModifiedTime;
     }
@@ -384,13 +446,13 @@ function parseWopiCallback(ctx, userAuthStr, opt_url) {
     let commonInfo = null;
     let lastModifiedTime = null;
     if (opt_url) {
-      let commonInfoStr = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, opt_url, 1);
+      const commonInfoStr = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, opt_url, 1);
       if (isWopiCallback(commonInfoStr)) {
         commonInfo = JSON.parse(commonInfoStr);
         if (commonInfo.fileInfo) {
           lastModifiedTime = commonInfo.fileInfo.LastModifiedTime;
           if (lastModifiedTime) {
-            let callbacks = sqlBase.UserCallback.prototype.getCallbacks(ctx, opt_url);
+            const callbacks = sqlBase.UserCallback.prototype.getCallbacks(ctx, opt_url);
             lastModifiedTime = getLastModifiedTimeFromCallbacks(callbacks);
           }
         } else {
@@ -398,43 +460,43 @@ function parseWopiCallback(ctx, userAuthStr, opt_url) {
         }
       }
     }
-    wopiParams = {commonInfo: commonInfo, userAuth: userAuth, LastModifiedTime: lastModifiedTime};
+    wopiParams = {commonInfo, userAuth, LastModifiedTime: lastModifiedTime};
     ctx.logger.debug('parseWopiCallback wopiParams:%j', wopiParams);
   }
   return wopiParams;
 }
 function checkAndInvalidateCache(ctx, docId, fileInfo) {
-  return co(function*() {
-    let res = {success: true, lockId: undefined};
-    let selectRes = yield taskResult.select(ctx, docId);
+  return co(function* () {
+    const res = {success: true, lockId: undefined};
+    const selectRes = yield taskResult.select(ctx, docId);
     if (selectRes.length > 0) {
-      let row = selectRes[0];
+      const row = selectRes[0];
       if (row.callback) {
-        let commonInfoStr = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, row.callback, 1);
+        const commonInfoStr = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, row.callback, 1);
         if (isWopiCallback(commonInfoStr)) {
-          let commonInfo = JSON.parse(commonInfoStr);
+          const commonInfo = JSON.parse(commonInfoStr);
           res.lockId = commonInfo.lockId;
           ctx.logger.debug('wopiEditor lockId from DB lockId=%s', res.lockId);
-          let unlockMarkStr = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, row.callback);
+          const unlockMarkStr = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, row.callback);
           ctx.logger.debug('wopiEditor commonInfoStr=%s', commonInfoStr);
           ctx.logger.debug('wopiEditor unlockMarkStr=%s', unlockMarkStr);
-          let hasUnlockMarker = isWopiUnlockMarker(unlockMarkStr);
-          let isUpdateVersion = commonDefines.FileStatus.UpdateVersion === row.status;
+          const hasUnlockMarker = isWopiUnlockMarker(unlockMarkStr);
+          const isUpdateVersion = commonDefines.FileStatus.UpdateVersion === row.status;
           ctx.logger.debug('wopiEditor hasUnlockMarker=%s isUpdateVersion=%s', hasUnlockMarker, isUpdateVersion);
           if (hasUnlockMarker || isUpdateVersion) {
-            let fileInfoVersion = fileInfo.Version;
-            let cacheVersion = commonInfo.fileInfo.Version;
-            let fileInfoModified = fileInfo.LastModifiedTime;
-            let cacheModified = commonInfo.fileInfo.LastModifiedTime;
+            const fileInfoVersion = fileInfo.Version;
+            const cacheVersion = commonInfo.fileInfo.Version;
+            const fileInfoModified = fileInfo.LastModifiedTime;
+            const cacheModified = commonInfo.fileInfo.LastModifiedTime;
             ctx.logger.debug('wopiEditor version fileInfo=%s; cache=%s', fileInfoVersion, cacheVersion);
             ctx.logger.debug('wopiEditor LastModifiedTime fileInfo=%s; cache=%s', fileInfoModified, cacheModified);
-            if (fileInfoVersion !== cacheVersion || (fileInfoModified !== cacheModified)) {
-              var mask = new taskResult.TaskResultData();
+            if (fileInfoVersion !== cacheVersion || fileInfoModified !== cacheModified) {
+              const mask = new taskResult.TaskResultData();
               mask.tenant = ctx.tenant;
               mask.key = docId;
               mask.last_open_date = row.last_open_date;
               //cleanupRes can be false in case of simultaneous opening. it is OK
-              let cleanupRes = yield canvasService.cleanupCacheIf(ctx, mask);
+              const cleanupRes = yield canvasService.cleanupCacheIf(ctx, mask);
               ctx.logger.debug('wopiEditor cleanupRes=%s', cleanupRes);
               res.lockId = undefined;
             }
@@ -449,7 +511,7 @@ function checkAndInvalidateCache(ctx, docId, fileInfo) {
   });
 }
 function parsePutFileResponse(ctx, postRes) {
-  let body = null
+  let body = null;
   if (postRes.body) {
     try {
       //collabora nexcloud connector
@@ -470,13 +532,12 @@ async function checkAndReplaceEmptyFile(ctx, fileInfo, wopiSrc, access_token, ac
 
     if (templatesFolderLocalesCache === null) {
       const dirContent = await readdir(`${tenNewFileTemplate}/`, {withFileTypes: true});
-      templatesFolderLocalesCache = dirContent.filter(dirObject => dirObject.isDirectory())
-        .map(dirObject => dirObject.name);
+      templatesFolderLocalesCache = dirContent.filter(dirObject => dirObject.isDirectory()).map(dirObject => dirObject.name);
     }
 
     const localePrefix = lang || ui || 'en';
-    let locale = constants.TEMPLATES_FOLDER_LOCALE_COLLISON_MAP[localePrefix] ??
-      templatesFolderLocalesCache.find(locale => locale.startsWith(localePrefix));
+    let locale =
+      constants.TEMPLATES_FOLDER_LOCALE_COLLISON_MAP[localePrefix] ?? templatesFolderLocalesCache.find(locale => locale.startsWith(localePrefix));
     if (locale === undefined) {
       locale = constants.TEMPLATES_DEFAULT_LOCALE;
     }
@@ -488,11 +549,11 @@ async function checkAndReplaceEmptyFile(ctx, fileInfo, wopiSrc, access_token, ac
 
     const templateFileInfo = templateFilesSizeCache[filePath];
     const templateFileStream = createReadStream(filePath);
-    let postRes = await putFile(ctx, wopiParams, undefined, templateFileStream, templateFileInfo.size, fileInfo.UserId, false, false, false);
+    const postRes = await putFile(ctx, wopiParams, undefined, templateFileStream, templateFileInfo.size, fileInfo.UserId, false, false, false);
     if (postRes) {
       //update Size
       fileInfo.Size = templateFileInfo.size;
-      let body = parsePutFileResponse(ctx, postRes);
+      const body = parsePutFileResponse(ctx, postRes);
       //collabora nexcloud connector
       if (body?.LastModifiedTime) {
         //update LastModifiedTime
@@ -501,21 +562,112 @@ async function checkAndReplaceEmptyFile(ctx, fileInfo, wopiSrc, access_token, ac
     }
   }
 }
+function createDocId(ctx, wopiSrc, mode, fileInfo) {
+  const fileId = wopiSrc.substring(wopiSrc.lastIndexOf('/') + 1);
+  let docId = undefined;
+  if ('view' !== mode) {
+    docId = `${fileId}`;
+  } else {
+    //todo rename operation requires lock
+    fileInfo.SupportsRename = false;
+    //todo change docId to avoid empty cache after editors are gone
+    if (fileInfo.LastModifiedTime) {
+      docId = `view.${fileId}.${fileInfo.LastModifiedTime}`;
+    } else {
+      docId = `view.${fileId}.${fileInfo.Version}`;
+    }
+  }
+  docId = docId.replace(constants.DOC_ID_REPLACE_REGEX, '_').substring(0, constants.DOC_ID_MAX_LENGTH);
+  return docId;
+}
+async function preOpen(ctx, lockId, docId, fileInfo, userAuth, baseUrl, fileType) {
+  //todo move to lock and common info saving to websocket connection
+  //save common info
+  if (undefined === lockId) {
+    //Use deterministic(not random) lockId to fix issues with forgotten openings due to integrator failures
+    lockId = docId;
+    const commonInfo = JSON.stringify({lockId, fileInfo});
+    await canvasService.commandOpenStartPromise(ctx, docId, baseUrl, commonInfo, fileType);
+  }
+  //Lock
+  if ('view' !== userAuth.mode) {
+    return await lock(ctx, 'LOCK', lockId, fileInfo, userAuth);
+  }
+  return {error: false, statusCode: undefined};
+}
+
+/**
+ * Prepares document for editing by creating document ID and validating cache
+ * @param {operationContext.Context} ctx - The operation context
+ * @param {string} wopiSrc - The WOPI source URL
+ * @param {Object} fileInfo - File information from WOPI
+ * @param {Object} userAuth - User authentication object
+ * @param {string} fileType - File type
+ * @param {string} baseUrl - Base URL for internal file endpoints
+ * @param {Object} params - Parameters object to update
+ * @returns {Promise<boolean>} Promise resolving to success result
+ */
+async function prepareDocumentForEditing(ctx, wopiSrc, fileInfo, userAuth, fileType, baseUrl, params) {
+  let retryInViewMode = false;
+
+  do {
+    // Create document ID
+    const docId = createDocId(ctx, wopiSrc, userAuth.mode, fileInfo);
+    params.key = docId;
+
+    // Check and invalidate cache
+    const checkRes = await checkAndInvalidateCache(ctx, docId, fileInfo);
+    if (!checkRes.success) {
+      params.fileInfo = {};
+      return false;
+    }
+
+    if (!shutdownFlag) {
+      const preOpenRes = await preOpen(ctx, checkRes.lockId, docId, fileInfo, userAuth, baseUrl, fileType);
+      if (preOpenRes.error && userAuth.mode !== 'view' && !retryInViewMode) {
+        ctx.logger.warn('prepareDocumentForEditing error: lock failed, fallback to view mode');
+        userAuth.mode = 'view';
+        userAuth.forcedViewMode = true;
+        retryInViewMode = true;
+        continue;
+      } else if (preOpenRes.error) {
+        params.statusCode = preOpenRes.statusCode;
+        return false;
+      }
+    }
+
+    break;
+  } while (retryInViewMode);
+
+  return true;
+}
+
 function getEditorHtml(req, res) {
-  return co(function*() {
-    let params = {key: undefined, apiQuery: '', fileInfo: {}, userAuth: {}, queryParams: req.query, token: undefined, documentType: undefined, docs_api_config: {}};
-    let ctx = new operationContext.Context();
+  return co(function* () {
+    const params = {
+      statusCode: undefined,
+      key: undefined,
+      apiQuery: '',
+      fileInfo: {},
+      userAuth: {},
+      queryParams: req.query,
+      token: undefined,
+      documentType: undefined,
+      docs_api_config: {}
+    };
+    const ctx = new operationContext.Context();
     try {
       ctx.initFromRequest(req);
       yield ctx.initTenantCache();
-      const tenTokenEnableBrowser = ctx.getCfg('services.CoAuthoring.token.enable.browser', cfgTokenEnableBrowser);
       const tenTokenOutboxAlgorithm = ctx.getCfg('services.CoAuthoring.token.outbox.algorithm', cfgTokenOutboxAlgorithm);
       const tenTokenOutboxExpires = ctx.getCfg('services.CoAuthoring.token.outbox.expires', cfgTokenOutboxExpires);
       const tenWopiFileInfoBlockList = ctx.getCfg('wopi.fileInfoBlockList', cfgWopiFileInfoBlockList);
 
-      let wopiSrc = req.query['wopisrc'];
-      let fileId = wopiSrc.substring(wopiSrc.lastIndexOf('/') + 1);
+      const wopiSrc = req.query['wopisrc'];
+      const fileId = wopiSrc.substring(wopiSrc.lastIndexOf('/') + 1);
       ctx.setDocId(fileId);
+      const usid = req.query['usid'] || crypto.randomUUID();
+      ctx.setUserSessionId(usid);
 
       ctx.logger.info('wopiEditor start');
       ctx.logger.debug(`wopiEditor req.url:%s`, req.url);
@@ -524,20 +676,30 @@ function getEditorHtml(req, res) {
       params.apiQuery = `?${constants.SHARD_KEY_WOPI_NAME}=${encodeURIComponent(wopiSrc)}`;
       params.documentType = req.params.documentType;
       let mode = req.params.mode;
-      let sc = req.query['sc'];
-      let hostSessionId = req.query['hid'];
-      let lang = req.query['lang'];
-      let ui = req.query['ui'];
-      let access_token = req.body['access_token'] || "";
-      let access_token_ttl = parseInt(req.body['access_token_ttl']) || 0;
-      let docs_api_config = req.body['docs_api_config'];
+      const sc = req.query['sc'];
+      const lang = req.query['lang'];
+      const ui = req.query['ui'];
+      const access_token = req.body['access_token'] || '';
+      const access_token_ttl = parseInt(req.body['access_token_ttl']) || 0;
+      const docs_api_config = req.body['docs_api_config'];
       if (docs_api_config) {
         params.docs_api_config = JSON.parse(docs_api_config);
       }
+      // Create user authentication object
+      const userAuth = (params.userAuth = {
+        wopiSrc,
+        access_token,
+        access_token_ttl,
+        userSessionId: usid,
+        mode,
+        forcedViewMode: false
+      });
 
-
-      let fileInfo = params.fileInfo = yield checkFileInfo(ctx, wopiSrc, access_token, sc);
-      if (!fileInfo) {
+      const fileInfo = (params.fileInfo = yield checkFileInfo(ctx, wopiSrc, access_token, sc));
+      if (!fileInfo || fileInfo.error) {
+        if (fileInfo && fileInfo.error) {
+          params.statusCode = fileInfo.statusCode;
+        }
         params.fileInfo = {};
         return;
       }
@@ -546,73 +708,37 @@ function getEditorHtml(req, res) {
         yield checkAndReplaceEmptyFile(ctx, fileInfo, wopiSrc, access_token, access_token_ttl, lang, ui, fileType);
       }
 
-      if (!fileInfo.UserCanWrite) {
-        mode = 'view';
+      const canEdit = fileInfo.UserCanOnlyComment || fileInfo.UserCanWrite || fileInfo.UserCanReview;
+      if (!canEdit) {
+        ctx.logger.warn('wopiEditor: edit mode is not allowed, fallback to view mode');
+        userAuth.mode = 'view';
+        userAuth.forcedViewMode = true;
       }
-      //docId
-      let docId = undefined;
-      if ('view' !== mode) {
-        docId = `${fileId}`;
-      } else {
-        //todo rename operation requires lock
-        fileInfo.SupportsRename = false;
-        //todo change docId to avoid empty cache after editors are gone
-        if (fileInfo.LastModifiedTime) {
-          docId = `view.${fileId}.${fileInfo.LastModifiedTime}`;
-        } else {
-          docId = `view.${fileId}.${fileInfo.Version}`;
-        }
-      }
-      docId = docId.replace(constants.DOC_ID_REPLACE_REGEX, '_').substring(0, constants.DOC_ID_MAX_LENGTH);
-      ctx.logger.debug(`wopiEditor`);
-      params.key = docId;
-      let userAuth = params.userAuth = {
-        wopiSrc: wopiSrc, access_token: access_token, access_token_ttl: access_token_ttl,
-        hostSessionId: hostSessionId, userSessionId: docId, mode: mode
-      };
 
-      //check and invalidate cache
-      let checkRes = yield checkAndInvalidateCache(ctx, docId, fileInfo);
-      let lockId = checkRes.lockId;
-      if (!checkRes.success) {
+      // Prepare document for editing (docId, cache validation)
+      const prepareResult = yield prepareDocumentForEditing(ctx, wopiSrc, fileInfo, userAuth, fileType, utils.getBaseUrlByRequest(ctx, req), params);
+      if (!prepareResult) {
         params.fileInfo = {};
         return;
       }
-      if (!shutdownFlag) {
-        //save common info
-        if (undefined === lockId) {
-          //Use deterministic(not random) lockId to fix issues with forgotten openings due to integrator failures
-          lockId = docId;
-          let commonInfo = JSON.stringify({lockId: lockId, fileInfo: fileInfo});
-          yield canvasService.commandOpenStartPromise(ctx, docId, utils.getBaseUrlByRequest(ctx, req), commonInfo, fileType);
-        }
 
-        //Lock
-        if ('view' !== mode) {
-          let lockRes = yield lock(ctx, 'LOCK', lockId, fileInfo, userAuth);
-          if (!lockRes) {
-            params.fileInfo = {};
-            return;
-          }
-        }
-      }
+      mode = userAuth.mode;
+      ctx.setDocId(params.key);
 
-      tenWopiFileInfoBlockList.forEach((item) => {
+      tenWopiFileInfoBlockList.forEach(item => {
         delete params.fileInfo[item];
       });
 
-      if (tenTokenEnableBrowser) {
-        let options = {algorithm: tenTokenOutboxAlgorithm, expiresIn: tenTokenOutboxExpires};
-        let secret = yield tenantManager.getTenantSecret(ctx, commonDefines.c_oAscSecretType.Browser);
-        params.token = jwt.sign(params, secret, options);
-      }
+      const options = {algorithm: tenTokenOutboxAlgorithm, expiresIn: tenTokenOutboxExpires};
+      const secret = yield tenantManager.getTenantSecret(ctx, commonDefines.c_oAscSecretType.Browser);
+      params.token = jwt.sign(params, utils.getJwtHsKey(secret), options);
     } catch (err) {
-      ctx.logger.error('wopiEditor error:%s', err.stack);
+      ctx.logger.error('wopiEditor error: %s', err.stack);
       params.fileInfo = {};
     } finally {
       ctx.logger.debug('wopiEditor render params=%j', params);
       try {
-        res.render("editor-wopi", params);
+        res.render('editor-wopi', params);
       } catch (err) {
         ctx.logger.error('wopiEditor error:%s', err.stack);
         res.sendStatus(400);
@@ -622,61 +748,64 @@ function getEditorHtml(req, res) {
   });
 }
 function getConverterHtml(req, res) {
-  return co(function*() {
-    let params = {statusHandler: undefined};
-    let ctx = new operationContext.Context();
+  return co(function* () {
+    const params = {statusHandler: undefined};
+    const ctx = new operationContext.Context();
     try {
       ctx.initFromRequest(req);
       yield ctx.initTenantCache();
-      const tenTokenEnableBrowser = ctx.getCfg('services.CoAuthoring.token.enable.browser', cfgTokenEnableBrowser);
       const tenTokenOutboxAlgorithm = ctx.getCfg('services.CoAuthoring.token.outbox.algorithm', cfgTokenOutboxAlgorithm);
       const tenTokenOutboxExpires = ctx.getCfg('services.CoAuthoring.token.outbox.expires', cfgTokenOutboxExpires);
       const tenWopiHost = ctx.getCfg('wopi.host', cfgWopiHost);
 
-      let wopiSrc = req.query['wopisrc'];
-      let fileId = wopiSrc.substring(wopiSrc.lastIndexOf('/') + 1);
+      const wopiSrc = req.query['wopisrc'];
+      const fileId = wopiSrc.substring(wopiSrc.lastIndexOf('/') + 1);
       ctx.setDocId(fileId);
       ctx.logger.info('convert-and-edit start');
 
-      let access_token = req.body['access_token'] || "";
-      let access_token_ttl = parseInt(req.body['access_token_ttl']) || 0;
-      let ext = req.params.ext;
-      let targetext = req.params.targetext;
+      const access_token = req.body['access_token'] || '';
+      const access_token_ttl = parseInt(req.body['access_token_ttl']) || 0;
+      const ext = req.params.ext;
+      const targetext = req.params.targetext;
 
       if (!(wopiSrc && access_token && access_token_ttl && ext && targetext)) {
-        ctx.logger.debug('convert-and-edit invalid params: WOPISrc=%s; access_token=%s; access_token_ttl=%s; ext=%s; targetext=%s', wopiSrc, access_token, access_token_ttl, ext, targetext);
+        ctx.logger.debug(
+          'convert-and-edit invalid params: WOPISrc=%s; access_token=%s; access_token_ttl=%s; ext=%s; targetext=%s',
+          wopiSrc,
+          access_token,
+          access_token_ttl,
+          ext,
+          targetext
+        );
         return;
       }
 
-      let fileInfo = yield checkFileInfo(ctx, wopiSrc, access_token);
-      if (!fileInfo) {
-        ctx.logger.info('convert-and-edit checkFileInfo error');
+      const fileInfo = yield checkFileInfo(ctx, wopiSrc, access_token);
+      if (!fileInfo || fileInfo.error) {
         return;
       }
 
-      let wopiParams = getWopiParams(undefined, fileInfo, wopiSrc, access_token, access_token_ttl);
+      const wopiParams = getWopiParams(undefined, fileInfo, wopiSrc, access_token, access_token_ttl);
 
-      let docId = yield converterService.convertAndEdit(ctx, wopiParams, ext, targetext);
+      const docId = yield converterService.convertAndEdit(ctx, wopiParams, ext, targetext);
       if (docId) {
-        let baseUrl = tenWopiHost || utils.getBaseUrlByRequest(ctx, req);
+        const baseUrl = tenWopiHost || utils.getBaseUrlByRequest(ctx, req);
         params.statusHandler = `${baseUrl}/hosting/wopi/convert-and-edit-handler`;
         params.statusHandler += `?${constants.SHARD_KEY_WOPI_NAME}=${encodeURIComponent(wopiSrc)}&access_token=${encodeURIComponent(access_token)}`;
         params.statusHandler += `&targetext=${encodeURIComponent(targetext)}&docId=${encodeURIComponent(docId)}`;
-        if (tenTokenEnableBrowser) {
-          let tokenData = {docId: docId};
-          let options = {algorithm: tenTokenOutboxAlgorithm, expiresIn: tenTokenOutboxExpires};
-          let secret = yield tenantManager.getTenantSecret(ctx, commonDefines.c_oAscSecretType.Browser);
-          let token = jwt.sign(tokenData, secret, options);
+        const tokenData = {docId};
+        const options = {algorithm: tenTokenOutboxAlgorithm, expiresIn: tenTokenOutboxExpires};
+        const secret = yield tenantManager.getTenantSecret(ctx, commonDefines.c_oAscSecretType.Browser);
+        const token = jwt.sign(tokenData, utils.getJwtHsKey(secret), options);
 
-          params.statusHandler += `&token=${encodeURIComponent(token)}`;
-        }
+        params.statusHandler += `&token=${encodeURIComponent(token)}`;
       }
     } catch (err) {
       ctx.logger.error('convert-and-edit error:%s', err.stack);
     } finally {
       ctx.logger.debug('convert-and-edit render params=%j', params);
       try {
-        res.render("convert-and-edit-wopi", params);
+        res.render('convert-and-edit-wopi', params);
       } catch (err) {
         ctx.logger.error('convert-and-edit error:%s', err.stack);
         res.sendStatus(400);
@@ -695,20 +824,21 @@ function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, 
       if (!wopiParams.userAuth || !wopiParams.commonInfo) {
         return postRes;
       }
-      let fileInfo = wopiParams.commonInfo.fileInfo;
-      let userAuth = wopiParams.userAuth;
-      let uri = `${userAuth.wopiSrc}/contents?access_token=${userAuth.access_token}`;
-      let filterStatus = yield checkIpFilter(ctx, uri);
+      const fileInfo = wopiParams.commonInfo.fileInfo;
+      const userAuth = wopiParams.userAuth;
+      const uri = `${userAuth.wopiSrc}/contents?access_token=${encodeURIComponent(userAuth.access_token)}`;
+      const filterStatus = yield checkIpFilter(ctx, uri);
       if (0 !== filterStatus) {
         return postRes;
       }
 
       //collabora nexcloud connector sets only UserCanWrite=true
-      if (fileInfo && (fileInfo.SupportsUpdate || fileInfo.UserCanWrite)) {
-        let commonInfo = wopiParams.commonInfo;
+      const canEdit = fileInfo.UserCanOnlyComment || fileInfo.UserCanWrite || fileInfo.UserCanReview;
+      if (fileInfo && (fileInfo.SupportsUpdate || canEdit)) {
+        const commonInfo = wopiParams.commonInfo;
         //todo add all the users who contributed changes to the document in this PutFile request to X-WOPI-Editors
-        let headers = {'X-WOPI-Override': 'PUT', 'X-WOPI-Lock': commonInfo.lockId, 'X-WOPI-Editors': userLastChangeId};
-        yield fillStandardHeaders(ctx, headers, uri, userAuth.access_token);
+        const headers = {'X-WOPI-Override': 'PUT', 'X-WOPI-Lock': commonInfo.lockId, 'X-WOPI-Editors': userLastChangeId};
+        yield wopiUtils.fillStandardHeaders(ctx, headers, uri, userAuth.access_token);
         headers['X-LOOL-WOPI-IsModifiedByUser'] = isModifiedByUser;
         headers['X-LOOL-WOPI-IsAutosave'] = isAutosave;
         headers['X-LOOL-WOPI-IsExitSave'] = isExitSave;
@@ -719,14 +849,17 @@ function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, 
         headers['Content-Type'] = mime.getType(getFileTypeByInfo(fileInfo));
 
         ctx.logger.debug('wopi PutFile request uri=%s headers=%j', uri, headers);
-        postRes = yield utils.postRequestPromise(ctx, uri, data, dataStream, dataSize, tenCallbackRequestTimeout, undefined, headers);
+        //isInJwtToken is true because it passed checkIpFilter for wopi
+        const isInJwtToken = true;
+        postRes = yield utils.postRequestPromise(ctx, uri, data, dataStream, dataSize, tenCallbackRequestTimeout, undefined, isInJwtToken, headers);
         ctx.logger.debug('wopi PutFile response headers=%j', postRes.response.headers);
         ctx.logger.debug('wopi PutFile response body:%s', postRes.body);
       } else {
-        ctx.logger.warn('wopi SupportsUpdate = false or UserCanWrite = false');
+        ctx.logger.warn('wopi SupportsUpdate = %s or canEdit = %s', fileInfo?.SupportsUpdate, canEdit);
       }
     } catch (err) {
-      ctx.logger.error('wopi error PutFile:%s', err.stack);
+      const errorMsg = getWopiErrorMessage(err.statusCode);
+      ctx.logger.error('wopi PutFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
     } finally {
       ctx.logger.info('wopi PutFile end');
     }
@@ -740,145 +873,240 @@ function putRelativeFile(ctx, wopiSrc, access_token, data, dataStream, dataSize,
       ctx.logger.info('wopi putRelativeFile start');
       const tenCallbackRequestTimeout = ctx.getCfg('services.CoAuthoring.server.callbackRequestTimeout', cfgCallbackRequestTimeout);
 
-      let uri = `${wopiSrc}?access_token=${access_token}`;
-      let filterStatus = yield checkIpFilter(ctx, uri);
+      const uri = `${wopiSrc}?access_token=${encodeURIComponent(access_token)}`;
+      const filterStatus = yield checkIpFilter(ctx, uri);
       if (0 !== filterStatus) {
         return res;
       }
 
-      let headers = {'X-WOPI-Override': 'PUT_RELATIVE', 'X-WOPI-SuggestedTarget': utf7.encode(suggestedTarget || suggestedExt)};
+      const headers = {'X-WOPI-Override': 'PUT_RELATIVE', 'X-WOPI-SuggestedTarget': utf7.encode(suggestedTarget || suggestedExt)};
       if (isFileConversion) {
         headers['X-WOPI-FileConversion'] = isFileConversion;
       }
-      yield fillStandardHeaders(ctx, headers, uri, access_token);
+      yield wopiUtils.fillStandardHeaders(ctx, headers, uri, access_token);
       headers['Content-Type'] = mime.getType(suggestedExt);
 
       ctx.logger.debug('wopi putRelativeFile request uri=%s headers=%j', uri, headers);
-      let postRes = yield utils.postRequestPromise(ctx, uri, data, dataStream, dataSize, tenCallbackRequestTimeout, undefined, headers);
+      //isInJwtToken is true because it passed checkIpFilter for wopi
+      const isInJwtToken = true;
+      const postRes = yield utils.postRequestPromise(
+        ctx,
+        uri,
+        data,
+        dataStream,
+        dataSize,
+        tenCallbackRequestTimeout,
+        undefined,
+        isInJwtToken,
+        headers
+      );
       ctx.logger.debug('wopi putRelativeFile response headers=%j', postRes.response.headers);
       ctx.logger.debug('wopi putRelativeFile response body:%s', postRes.body);
       res = JSON.parse(postRes.body);
     } catch (err) {
-      ctx.logger.error('wopi error putRelativeFile:%s', err.stack);
+      const errorMsg = getWopiErrorMessage(err.statusCode);
+      ctx.logger.error('wopi putRelativeFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
     } finally {
       ctx.logger.info('wopi putRelativeFile end');
     }
     return res;
   });
 }
-function renameFile(ctx, wopiParams, name) {
-  return co(function* () {
-    let res = undefined;
-    try {
-      ctx.logger.info('wopi RenameFile start');
-      const tenCallbackRequestTimeout = ctx.getCfg('services.CoAuthoring.server.callbackRequestTimeout', cfgCallbackRequestTimeout);
+/**
+ * Renames a file using the WOPI protocol
+ * @param {operationContext.Context} ctx - The operation context.
+ * @param {object} wopiParams - The WOPI parameters.
+ * @param {string} name - The new name for the file.
+ * @returns {Promise<{Name: string}|undefined>}
+ */
+async function renameFile(ctx, wopiParams, name) {
+  let res = undefined;
+  try {
+    ctx.logger.info('wopi RenameFile start');
+    const tenCallbackRequestTimeout = ctx.getCfg('services.CoAuthoring.server.callbackRequestTimeout', cfgCallbackRequestTimeout);
 
-      if (!wopiParams.userAuth || !wopiParams.commonInfo) {
+    if (!wopiParams.userAuth || !wopiParams.commonInfo) {
+      return res;
+    }
+    const fileInfo = wopiParams.commonInfo.fileInfo;
+    const userAuth = wopiParams.userAuth;
+    const uri = `${userAuth.wopiSrc}?access_token=${encodeURIComponent(userAuth.access_token)}`;
+    const filterStatus = await checkIpFilter(ctx, uri);
+    if (0 !== filterStatus) {
+      return res;
+    }
+
+    if (fileInfo && fileInfo.SupportsRename) {
+      const fileNameMaxLength = fileInfo.FileNameMaxLength || 255;
+      name = name.substring(0, fileNameMaxLength);
+      const commonInfo = wopiParams.commonInfo;
+
+      const headers = {'X-WOPI-Override': 'RENAME_FILE', 'X-WOPI-Lock': commonInfo.lockId, 'X-WOPI-RequestedName': utf7.encode(name)};
+      await wopiUtils.fillStandardHeaders(ctx, headers, uri, userAuth.access_token);
+
+      ctx.logger.debug('wopi RenameFile request uri=%s headers=%j', uri, headers);
+      //isInJwtToken is true because it passed checkIpFilter for wopi
+      const isInJwtToken = true;
+      const postRes = await utils.postRequestPromise(
+        ctx,
+        uri,
+        undefined,
+        undefined,
+        undefined,
+        tenCallbackRequestTimeout,
+        undefined,
+        isInJwtToken,
+        headers
+      );
+      ctx.logger.debug('wopi RenameFile response headers=%j body=%s', postRes.response.headers, postRes.body);
+      if (postRes.body) {
+        res = JSON.parse(postRes.body);
+      } else {
+        //sharepoint send empty body(2016 allways, 2019 with same name)
+        res = {Name: name};
+      }
+    } else {
+      ctx.logger.info('wopi SupportsRename = false');
+    }
+  } catch (err) {
+    const errorMsg = getWopiErrorMessage(err.statusCode);
+    ctx.logger.error('wopi RenameFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+  } finally {
+    ctx.logger.info('wopi RenameFile end');
+  }
+  return res;
+}
+
+async function refreshFile(ctx, wopiParams, baseUrl) {
+  let res;
+  try {
+    ctx.logger.info('wopi RefreshFile start');
+    const userAuth = wopiParams.userAuth;
+    if (!userAuth) {
+      return;
+    }
+    const tenTokenOutboxAlgorithm = ctx.getCfg('services.CoAuthoring.token.outbox.algorithm', cfgTokenOutboxAlgorithm);
+    const tenTokenOutboxExpires = ctx.getCfg('services.CoAuthoring.token.outbox.expires', cfgTokenOutboxExpires);
+
+    const fileInfo = await checkFileInfo(ctx, userAuth.wopiSrc, userAuth.access_token);
+    if (!fileInfo || fileInfo.error) {
+      return;
+    }
+    const fileType = getFileTypeByInfo(fileInfo);
+
+    res = {userAuth, fileInfo, queryParams: undefined};
+    const prepareResult = await prepareDocumentForEditing(ctx, userAuth.wopiSrc, fileInfo, userAuth, fileType, baseUrl, res);
+    if (!prepareResult) {
+      return;
+    }
+    const options = {algorithm: tenTokenOutboxAlgorithm, expiresIn: tenTokenOutboxExpires};
+    const secret = await tenantManager.getTenantSecret(ctx, commonDefines.c_oAscSecretType.Browser);
+    res.token = jwt.sign(res, utils.getJwtHsKey(secret), options);
+  } catch (err) {
+    res = undefined;
+    ctx.logger.error('wopi error RefreshFile:%s', err.stack);
+  } finally {
+    ctx.logger.info('wopi RefreshFile end');
+  }
+  return res;
+}
+/**
+ * Checks file info from WOPI server (implements CheckFileInfo operation)
+ * @see https://learn.microsoft.com/en-us/microsoft-365/cloud-storage-partner-program/rest/files/checkfileinfo
+ * @param {operationContext.Context} ctx - The operation context
+ * @param {string} wopiSrc - The WOPI source URL
+ * @param {string} access_token - Access token
+ * @param {string} opt_sc - Optional session context
+ * @returns {Promise<Object>} File info object or error object
+ *   - Success: File info object with properties
+ *   - Error: {error: true, statusCode: 401|404|500}
+ */
+async function checkFileInfo(ctx, wopiSrc, access_token, opt_sc) {
+  let result = null;
+  try {
+    ctx.logger.info('wopi checkFileInfo start');
+    const tenDownloadTimeout = ctx.getCfg('FileConverter.converter.downloadTimeout', cfgDownloadTimeout);
+
+    const uri = `${wopiSrc}?access_token=${encodeURIComponent(access_token)}`;
+    const filterStatus = await checkIpFilter(ctx, uri);
+    if (0 !== filterStatus) {
+      const errorMsg = getWopiErrorMessage(403);
+      ctx.logger.error('wopi checkFileInfo error status=%d (%s)', 403, errorMsg);
+      return {error: true, statusCode: 403};
+    }
+    const headers = {};
+    if (opt_sc) {
+      headers['X-WOPI-SessionContext'] = opt_sc;
+    }
+    await wopiUtils.fillStandardHeaders(ctx, headers, uri, access_token);
+    ctx.logger.debug('wopi checkFileInfo request uri=%s headers=%j', uri, headers);
+    //isInJwtToken is true because it passed checkIpFilter for wopi
+    const isInJwtToken = true;
+    const getRes = await utils.downloadUrlPromise(ctx, uri, tenDownloadTimeout, undefined, undefined, isInJwtToken, headers);
+    ctx.logger.debug(`wopi checkFileInfo headers=%j body=%s`, getRes.response.headers, getRes.body);
+    result = JSON.parse(getRes.body);
+  } catch (err) {
+    const errorMsg = getWopiErrorMessage(err.statusCode);
+    ctx.logger.error('wopi checkFileInfo error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+    result = {
+      error: true,
+      statusCode: err.statusCode
+    };
+  } finally {
+    ctx.logger.info('wopi checkFileInfo end');
+  }
+  return result;
+}
+async function lock(ctx, command, lockId, fileInfo, userAuth) {
+  const res = {error: false, statusCode: undefined};
+  try {
+    ctx.logger.info('wopi %s start', command);
+    const tenCallbackRequestTimeout = ctx.getCfg('services.CoAuthoring.server.callbackRequestTimeout', cfgCallbackRequestTimeout);
+
+    if (fileInfo && fileInfo.SupportsLocks) {
+      if (!userAuth) {
+        res.error = true;
         return res;
       }
-      let fileInfo = wopiParams.commonInfo.fileInfo;
-      let userAuth = wopiParams.userAuth;
-      let uri = `${userAuth.wopiSrc}?access_token=${userAuth.access_token}`;
-      let filterStatus = yield checkIpFilter(ctx, uri);
+      const wopiSrc = userAuth.wopiSrc;
+      const access_token = userAuth.access_token;
+      const uri = `${wopiSrc}?access_token=${encodeURIComponent(access_token)}`;
+      const filterStatus = await checkIpFilter(ctx, uri);
       if (0 !== filterStatus) {
+        res.error = true;
+        res.statusCode = 403;
         return res;
       }
 
-      if (fileInfo && fileInfo.SupportsRename) {
-        let fileNameMaxLength = fileInfo.FileNameMaxLength || 255;
-        name = name.substring(0, fileNameMaxLength);
-        let commonInfo = wopiParams.commonInfo;
-
-        let headers = {'X-WOPI-Override': 'RENAME_FILE', 'X-WOPI-Lock': commonInfo.lockId, 'X-WOPI-RequestedName': utf7.encode(name)};
-        yield fillStandardHeaders(ctx, headers, uri, userAuth.access_token);
-
-        ctx.logger.debug('wopi RenameFile request uri=%s headers=%j', uri, headers);
-        let postRes = yield utils.postRequestPromise(ctx, uri, undefined, undefined, undefined, tenCallbackRequestTimeout, undefined, headers);
-        ctx.logger.debug('wopi RenameFile response headers=%j body=%s', postRes.response.headers, postRes.body);
-        if (postRes.body) {
-          res = JSON.parse(postRes.body);
-        } else {
-          //sharepoint send empty body(2016 allways, 2019 with same name)
-          res = {"Name": name};
-        }
-      } else {
-        ctx.logger.info('wopi SupportsRename = false');
-      }
-    } catch (err) {
-      ctx.logger.error('wopi error RenameFile:%s', err.stack);
-    } finally {
-      ctx.logger.info('wopi RenameFile end');
+      const headers = {'X-WOPI-Override': command, 'X-WOPI-Lock': lockId};
+      await wopiUtils.fillStandardHeaders(ctx, headers, uri, access_token);
+      ctx.logger.debug('wopi %s request uri=%s headers=%j', command, uri, headers);
+      //isInJwtToken is true because it passed checkIpFilter for wopi
+      const isInJwtToken = true;
+      const postRes = await utils.postRequestPromise(
+        ctx,
+        uri,
+        undefined,
+        undefined,
+        undefined,
+        tenCallbackRequestTimeout,
+        undefined,
+        isInJwtToken,
+        headers
+      );
+      ctx.logger.debug('wopi %s response headers=%j', command, postRes.response.headers);
+    } else {
+      ctx.logger.info('wopi %s SupportsLocks = false', command);
     }
-    return res;
-  });
-}
-function checkFileInfo(ctx, wopiSrc, access_token, opt_sc) {
-  return co(function* () {
-    let fileInfo = undefined;
-    try {
-      ctx.logger.info('wopi checkFileInfo start');
-      const tenDownloadTimeout = ctx.getCfg('FileConverter.converter.downloadTimeout', cfgDownloadTimeout);
-
-      let uri = `${encodeURI(wopiSrc)}?access_token=${encodeURIComponent(access_token)}`;
-      let filterStatus = yield checkIpFilter(ctx, uri);
-      if (0 !== filterStatus) {
-        return fileInfo;
-      }
-      let headers = {};
-      if (opt_sc) {
-        headers['X-WOPI-SessionContext'] = opt_sc;
-      }
-      yield fillStandardHeaders(ctx, headers, uri, access_token);
-      ctx.logger.debug('wopi checkFileInfo request uri=%s headers=%j', uri, headers);
-      //todo false? (true because it passed checkIpFilter for wopi)
-      //todo use directIfIn
-      let isInJwtToken = true;
-      let getRes = yield utils.downloadUrlPromise(ctx, uri, tenDownloadTimeout, undefined, undefined, isInJwtToken, headers);
-      ctx.logger.debug(`wopi checkFileInfo headers=%j body=%s`, getRes.response.headers, getRes.body);
-      fileInfo = JSON.parse(getRes.body);
-    } catch (err) {
-      ctx.logger.error('wopi error checkFileInfo:%s', err.stack);
-    } finally {
-      ctx.logger.info('wopi checkFileInfo end');
-    }
-    return fileInfo;
-  });
-}
-function lock(ctx, command, lockId, fileInfo, userAuth) {
-  return co(function* () {
-    let res = true;
-    try {
-      ctx.logger.info('wopi %s start', command);
-      const tenCallbackRequestTimeout = ctx.getCfg('services.CoAuthoring.server.callbackRequestTimeout', cfgCallbackRequestTimeout);
-
-      if (fileInfo && fileInfo.SupportsLocks) {
-        if (!userAuth) {
-          return false;
-        }
-        let wopiSrc = userAuth.wopiSrc;
-        let access_token = userAuth.access_token;
-        let uri = `${wopiSrc}?access_token=${access_token}`;
-        let filterStatus = yield checkIpFilter(ctx, uri);
-        if (0 !== filterStatus) {
-          return false;
-        }
-
-        let headers = {"X-WOPI-Override": command, "X-WOPI-Lock": lockId};
-        yield fillStandardHeaders(ctx, headers, uri, access_token);
-        ctx.logger.debug('wopi %s request uri=%s headers=%j', command, uri, headers);
-        let postRes = yield utils.postRequestPromise(ctx, uri, undefined, undefined, undefined, tenCallbackRequestTimeout, undefined, headers);
-        ctx.logger.debug('wopi %s response headers=%j', command, postRes.response.headers);
-      } else {
-        ctx.logger.info('wopi %s SupportsLocks = false', command);
-      }
-    } catch (err) {
-      res = false;
-      ctx.logger.error('wopi error %s:%s', command, err.stack);
-    } finally {
-      ctx.logger.info('wopi %s end', command);
-    }
-    return res;
-  });
+  } catch (err) {
+    res.error = true;
+    res.statusCode = err.statusCode;
+    const errorMsg = getWopiErrorMessage(err.statusCode);
+    ctx.logger.error('wopi %s error status=%d (%s):%s', command, err.statusCode, errorMsg, err.stack);
+  } finally {
+    ctx.logger.info('wopi %s end', command);
+  }
+  return res;
 }
 async function unlock(ctx, wopiParams) {
   let res = false;
@@ -889,57 +1117,45 @@ async function unlock(ctx, wopiParams) {
     if (!wopiParams.userAuth || !wopiParams.commonInfo) {
       return;
     }
-    let fileInfo = wopiParams.commonInfo.fileInfo;
+    const fileInfo = wopiParams.commonInfo.fileInfo;
     if (fileInfo && fileInfo.SupportsLocks) {
-      let wopiSrc = wopiParams.userAuth.wopiSrc;
-      let lockId = wopiParams.commonInfo.lockId;
-      let access_token = wopiParams.userAuth.access_token;
-      let uri = `${wopiSrc}?access_token=${access_token}`;
-      let filterStatus = await checkIpFilter(ctx, uri);
+      const wopiSrc = wopiParams.userAuth.wopiSrc;
+      const lockId = wopiParams.commonInfo.lockId;
+      const access_token = wopiParams.userAuth.access_token;
+      const uri = `${wopiSrc}?access_token=${encodeURIComponent(access_token)}`;
+      const filterStatus = await checkIpFilter(ctx, uri);
       if (0 !== filterStatus) {
         return;
       }
 
-      let headers = {"X-WOPI-Override": "UNLOCK", "X-WOPI-Lock": lockId};
-      await fillStandardHeaders(ctx, headers, uri, access_token);
+      const headers = {'X-WOPI-Override': 'UNLOCK', 'X-WOPI-Lock': lockId};
+      await wopiUtils.fillStandardHeaders(ctx, headers, uri, access_token);
       ctx.logger.debug('wopi Unlock request uri=%s headers=%j', uri, headers);
-      let postRes = await utils.postRequestPromise(ctx, uri, undefined, undefined, undefined, tenCallbackRequestTimeout, undefined, headers);
+      //isInJwtToken is true because it passed checkIpFilter for wopi
+      const isInJwtToken = true;
+      const postRes = await utils.postRequestPromise(
+        ctx,
+        uri,
+        undefined,
+        undefined,
+        undefined,
+        tenCallbackRequestTimeout,
+        undefined,
+        isInJwtToken,
+        headers
+      );
       ctx.logger.debug('wopi Unlock response headers=%j', postRes.response.headers);
     } else {
       ctx.logger.info('wopi SupportsLocks = false');
     }
     res = true;
   } catch (err) {
-    ctx.logger.error('wopi error Unlock:%s', err.stack);
+    const errorMsg = getWopiErrorMessage(err.statusCode);
+    ctx.logger.error('wopi Unlock error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
   } finally {
     ctx.logger.info('wopi Unlock end');
   }
   return res;
-}
-function generateProofBuffer(url, accessToken, timeStamp) {
-  const accessTokenBytes = Buffer.from(accessToken, 'utf8');
-  const urlBytes = Buffer.from(url.toUpperCase(), 'utf8');
-
-  let offset = 0;
-  let buffer = Buffer.alloc(4 + accessTokenBytes.length + 4 + urlBytes.length + 4 + 8);
-  buffer.writeUInt32BE(accessTokenBytes.length, offset);
-  offset += 4;
-  accessTokenBytes.copy(buffer, offset, 0, accessTokenBytes.length);
-  offset += accessTokenBytes.length;
-  buffer.writeUInt32BE(urlBytes.length, offset);
-  offset += 4;
-  urlBytes.copy(buffer, offset, 0, urlBytes.length);
-  offset += urlBytes.length;
-  buffer.writeUInt32BE(8, offset);
-  offset += 4;
-  buffer.writeBigUInt64BE(timeStamp, offset);
-  return buffer;
-}
-
-async function generateProofSign(url, accessToken, timeStamp, privateKey) {
-  let data = generateProofBuffer(url, accessToken, timeStamp);
-  let sign = await cryptoSign('RSA-SHA256', data, privateKey);
-  return sign.toString('base64');
 }
 
 function numberToBase64(val) {
@@ -951,29 +1167,13 @@ function numberToBase64(val) {
   }
   //Convert the hexadecimal string to a buffer
   const buffer = Buffer.from(hexString, 'hex');
-  return  buffer.toString('base64');
+  return buffer.toString('base64');
 }
 
-async function fillStandardHeaders(ctx, headers, url, access_token) {
-  let timeStamp = utils.getDateTimeTicks(new Date());
-  const tenWopiPrivateKey = ctx.getCfg('wopi.privateKey', cfgWopiPrivateKey);
-  const tenWopiPrivateKeyOld = ctx.getCfg('wopi.privateKeyOld', cfgWopiPrivateKeyOld);
-  if (tenWopiPrivateKey && tenWopiPrivateKeyOld) {
-    headers['X-WOPI-Proof'] = await generateProofSign(url, access_token, timeStamp, tenWopiPrivateKey);
-    headers['X-WOPI-ProofOld'] = await generateProofSign(url, access_token, timeStamp, tenWopiPrivateKeyOld);
-    headers['X-WOPI-TimeStamp'] = timeStamp;
-    headers['X-WOPI-ClientVersion'] = commonDefines.buildVersion + '.' + commonDefines.buildNumber;
-    // todo
-    // headers['X-WOPI-CorrelationId '] = "";
-    // headers['X-WOPI-SessionId'] = "";
-  }
-  headers['Authorization'] = `Bearer ${access_token}`;
-}
-
-function checkIpFilter(ctx, uri){
+function checkIpFilter(ctx, uri) {
   return co(function* () {
-    let urlParsed = new URL(uri);
-    let filterStatus = yield* utils.checkHostFilter(ctx, urlParsed.hostname);
+    const urlParsed = new URL(uri);
+    const filterStatus = yield* utils.checkHostFilter(ctx, urlParsed.hostname);
     if (0 !== filterStatus) {
       ctx.logger.warn('wopi checkIpFilter error: url = %s', uri);
     }
@@ -981,72 +1181,47 @@ function checkIpFilter(ctx, uri){
   });
 }
 function getWopiParams(lockId, fileInfo, wopiSrc, access_token, access_token_ttl) {
-  let commonInfo = {lockId: lockId, fileInfo: fileInfo};
-  let userAuth = {
-    wopiSrc: wopiSrc, access_token: access_token, access_token_ttl: access_token_ttl,
-    hostSessionId: null, userSessionId: null, mode: null
+  const commonInfo = {lockId, fileInfo};
+  const userAuth = {
+    wopiSrc,
+    access_token,
+    access_token_ttl,
+    userSessionId: null,
+    mode: null
   };
-  return {commonInfo: commonInfo, userAuth: userAuth, LastModifiedTime: null};
+  return {commonInfo, userAuth, LastModifiedTime: null};
 }
 
 async function dummyCheckFileInfo(req, res) {
-  if (true) {
-    //static output for performance reason
-    res.json({
-      BaseFileName: "sample.docx",
-      OwnerId: "userId",
-      Size: 100,//no need to set actual size for test
-      UserId: "userId",//test ignores
-      UserFriendlyName: "user",
-      Version: 0,
-      UserCanWrite: true,
-      SupportsGetLock: true,
-      SupportsLocks: true,
-      SupportsUpdate: true,
-    });
-  } else {
-    let fileInfo;
-    let ctx = new operationContext.Context();
-    ctx.initFromRequest(req);
-    try {
-      await ctx.initTenantCache();
-      const tenWopiDummySampleFilePath = ctx.getCfg('wopi.dummy.sampleFilePath', cfgWopiDummySampleFilePath);
-      let access_token = req.query['access_token'];
-      ctx.logger.debug('dummyCheckFileInfo access_token:%s', access_token);
-      let sampleFileStat = await stat(tenWopiDummySampleFilePath);
-
-      fileInfo = JSON.parse(Buffer.from(access_token, 'base64').toString('ascii'));
-      fileInfo.BaseFileName = path.basename(tenWopiDummySampleFilePath);
-      fileInfo.Size = sampleFileStat.size;
-    } catch (err) {
-      ctx.logger.error('dummyCheckFileInfo error:%s', err.stack);
-    } finally {
-      if (fileInfo) {
-        res.json(fileInfo);
-      } else {
-        res.sendStatus(400)
-      }
-    }
-  }
+  //static output for performance reason
+  res.json({
+    BaseFileName: 'sample.docx',
+    OwnerId: 'userId',
+    Size: 100, //no need to set actual size for test
+    UserId: 'userId', //test ignores
+    UserFriendlyName: 'user',
+    Version: 0,
+    UserCanWrite: true,
+    SupportsGetLock: true,
+    SupportsLocks: true,
+    SupportsUpdate: true
+  });
 }
 
 async function dummyGetFile(req, res) {
-  let ctx = new operationContext.Context();
+  const ctx = new operationContext.Context();
   ctx.initFromRequest(req);
   try {
     await ctx.initTenantCache();
 
     const tenWopiDummySampleFilePath = ctx.getCfg('wopi.dummy.sampleFilePath', cfgWopiDummySampleFilePath);
-    let sampleFileStat = await stat(tenWopiDummySampleFilePath);
+    const sampleFileStat = await stat(tenWopiDummySampleFilePath);
     res.setHeader('Content-Length', sampleFileStat.size);
     res.setHeader('Content-Type', mime.getType(tenWopiDummySampleFilePath));
 
-    await pipeline(
-      createReadStream(tenWopiDummySampleFilePath),
-      res,
-    );
+    await pipeline(createReadStream(tenWopiDummySampleFilePath), res);
   } catch (err) {
-    if (err.code === "ERR_STREAM_PREMATURE_CLOSE") {
+    if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
       //xhr.abort case
       ctx.logger.debug('dummyGetFile error: %s', err.stack);
     } else {
@@ -1072,13 +1247,12 @@ exports.putFile = putFile;
 exports.parsePutFileResponse = parsePutFileResponse;
 exports.putRelativeFile = putRelativeFile;
 exports.renameFile = renameFile;
+exports.refreshFile = refreshFile;
 exports.lock = lock;
 exports.unlock = unlock;
-exports.fillStandardHeaders = fillStandardHeaders;
 exports.getWopiUnlockMarker = getWopiUnlockMarker;
 exports.getWopiModifiedMarker = getWopiModifiedMarker;
 exports.getFileTypeByInfo = getFileTypeByInfo;
-exports.getWopiFileUrl = getWopiFileUrl;
 exports.isWopiJwtToken = isWopiJwtToken;
 exports.setIsShutdown = setIsShutdown;
 exports.dummyCheckFileInfo = dummyCheckFileInfo;

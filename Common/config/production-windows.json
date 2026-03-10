@@ -2,6 +2,9 @@
   "log": {
     "filePath": "../../config/log4js/production.json"
   },
+  "runtimeConfig": {
+    "filePath": "./../runtime.json"
+  },
   "storage": {
     "fs": {
       "folderPath": "../App_Data/cache/files"
@@ -37,7 +40,12 @@
           },
           "/info": {
             "path": "../info",
-            "options": {"maxAge": "7d"}
+            "options": {
+              "maxAge": 0,
+              "cacheControl": "public, no-cache, must-revalidate",
+              "etag": true,
+              "lastModified": true
+            }
           }
         }
       },
@@ -59,7 +67,8 @@
       "fontDir": "",
       "presentationThemesDir": "../../sdkjs/slide/themes",
       "x2tPath": "../FileConverter/bin/x2t.exe",
-      "docbuilderPath": "../FileConverter/bin/docbuilder.exe"
+      "docbuilderPath": "../FileConverter/bin/docbuilder.exe",
+      "signingKeyStorePath": "./../signing-keystore.p12"
     }
   },
   "SpellChecker": {

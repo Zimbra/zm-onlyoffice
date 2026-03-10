@@ -2,6 +2,12 @@
   "log": {
     "filePath": "../Common/config/log4js/development.json"
   },
+  "runtimeConfig": {
+    "filePath": "./../runtime.json"
+  },
+  "queue": {
+    "visibilityTimeout": 900
+  },
   "storage": {
     "fs": {
       "folderPath": "../App_Data"
@@ -34,7 +40,13 @@
             "path": "../branding/welcome"
           },
           "/info": {
-            "path": "../branding/info"
+            "path": "../branding/info",
+            "options": {
+              "maxAge": 0,
+              "cacheControl": "public, no-cache, must-revalidate",
+              "etag": true,
+              "lastModified": true
+            }
           }
         }
       },
@@ -47,7 +59,7 @@
         "dbUser": "root",
         "dbPass": "onlyoffice"
       },
-      "request-filtering-agent" : {
+      "request-filtering-agent": {
         "allowPrivateIPAddress": true,
         "allowMetaIPAddress": true
       },
@@ -69,11 +81,48 @@
   },
   "FileConverter": {
     "converter": {
+      "maxDownloadBytes": 1073741824,
       "fontDir": "",
       "presentationThemesDir": "../../sdkjs/slide/themes",
       "x2tPath": "../FileConverter/bin/x2t",
       "docbuilderPath": "../FileConverter/Bin/docbuilder",
-      "errorfiles": "error"
+      "signingKeyStorePath": "./../signing-keystore.p12",
+      "spawnOptions": {
+        "env": {
+          "X2T_MEMORY_LIMIT": "16GB"
+        }
+      },
+      "errorfiles": "error",
+      "inputLimits": [
+        {
+          "type": "docx;dotx;docm;dotm",
+          "zip": {
+            "uncompressed": "1GB",
+            "template": "*.xml"
+          }
+        },
+        {
+          "type": "xlsx;xltx;xlsm;xltm",
+          "zip": {
+            "uncompressed": "1GB",
+            "template": "*.xml"
+          }
+        },
+        {
+          "type": "pptx;ppsx;potx;pptm;ppsm;potm",
+          "zip": {
+            "uncompressed": "1GB",
+            "template": "*.xml"
+          }
+        },
+        {
+          "type": "vsdx;vstx;vssx;vsdm;vstm;vssm",
+          "zip": {
+            "uncompressed": "1GB",
+            "template": "*.xml"
+          }
+        }
+      ]
     }
   },
   "SpellChecker": {

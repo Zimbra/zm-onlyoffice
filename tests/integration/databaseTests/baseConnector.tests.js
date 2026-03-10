@@ -30,7 +30,7 @@
  *
  */
 
-const { describe, test, expect, afterAll } = require('@jest/globals');
+const {describe, test, expect, afterAll} = require('@jest/globals');
 const config = require('../../../Common/node_modules/config');
 
 const baseConnector = require('../../../DocService/sources/databaseConnectors/baseConnector');
@@ -38,7 +38,7 @@ const operationContext = require('../../../Common/sources/operationContext');
 const taskResult = require('../../../DocService/sources/taskresult');
 const commonDefines = require('../../../Common/sources/commondefines');
 const constants = require('../../../Common/sources/constants');
-const utils = require("../../../Common/sources/utils");
+const utils = require('../../../Common/sources/utils');
 const configSql = config.get('services.CoAuthoring.sql');
 
 const ctx = new operationContext.Context();
@@ -66,13 +66,13 @@ const dbTypes = {
     number: 'INT',
     string: 'VARCHAR(50)'
   },
-  number: function () {
+  number() {
     return this[cfgDbType].number;
   },
-  string: function () {
+  string() {
     return this[cfgDbType].string;
   }
-}
+};
 
 const insertCases = {
   5: 'baseConnector-insert()-tester-5-rows',
@@ -81,6 +81,7 @@ const insertCases = {
   5000: 'baseConnector-insert()-tester-5000-rows',
   10000: 'baseConnector-insert()-tester-10000-rows'
 };
+const largeChangeCase = 'baseConnector-insert()-tester-large-change';
 const changesCases = {
   range: 'baseConnector-getChangesPromise()-tester',
   index: 'baseConnector-getChangesIndexPromise()-tester',
@@ -91,24 +92,20 @@ const emptyCallbacksCase = [
   'baseConnector-getEmptyCallbacks()-tester-1',
   'baseConnector-getEmptyCallbacks()-tester-2',
   'baseConnector-getEmptyCallbacks()-tester-3',
-  'baseConnector-getEmptyCallbacks()-tester-4',
+  'baseConnector-getEmptyCallbacks()-tester-4'
 ];
-const documentsWithChangesCase = [
-  'baseConnector-getDocumentsWithChanges()-tester-0',
-  'baseConnector-getDocumentsWithChanges()-tester-1'
-];
-const getExpiredCase = [
-  'baseConnector-getExpired()-tester-0',
-  'baseConnector-getExpired()-tester-1',
-  'baseConnector-getExpired()-tester-2',
-];
-const getCountWithStatusCase = [
-  'baseConnector-getCountWithStatusCase()-tester-0'
-];
+const documentsWithChangesCase = ['baseConnector-getDocumentsWithChanges()-tester-0', 'baseConnector-getDocumentsWithChanges()-tester-1'];
+const getExpiredCase = ['baseConnector-getExpired()-tester-0', 'baseConnector-getExpired()-tester-1', 'baseConnector-getExpired()-tester-2'];
+const getCountWithStatusCase = ['baseConnector-getCountWithStatusCase()-tester-0'];
 const upsertCases = {
   insert: 'baseConnector-upsert()-tester-row-inserted',
   update: 'baseConnector-upsert()-tester-row-updated'
 };
+const updateIfCases = {
+  notEmpty: 'baseConnector-updateIf()-tester-not-empty-callback',
+  emptyCallback: 'baseConnector-updateIf()-tester-empty-callback'
+};
+const oracleNullHandlingCases = ['baseConnector-oracle-nclob-null-handling', 'baseConnector-oracle-nclob-null-handling-2'];
 
 function createChanges(changesLength, date) {
   const objChanges = [
@@ -123,15 +120,13 @@ function createChanges(changesLength, date) {
 
   const length = changesLength - 1;
   for (let i = 1; i <= length; i++) {
-    objChanges.push(
-      {
-        docid: '__ffff_127.0.0.1new.docx41692082262909',
-        change: '"39;CgAAADcAXwA2ADQAMAACABwAAQAAAAAAAAABAAAALgAAAAAAAAAA"',
-        time: date,
-        user: 'uid-18',
-        useridoriginal: 'uid-1'
-      }
-    );
+    objChanges.push({
+      docid: '__ffff_127.0.0.1new.docx41692082262909',
+      change: '"39;CgAAADcAXwA2ADQAMAACABwAAQAAAAAAAAABAAAALgAAAAAAAAAA"',
+      time: date,
+      user: 'uid-18',
+      useridoriginal: 'uid-1'
+    });
   }
 
   return objChanges;
@@ -155,13 +150,20 @@ function deleteRowsByIds(table, ids) {
 
 function executeSql(sql, values = []) {
   return new Promise((resolve, reject) => {
-    baseConnector.sqlQuery(ctx, sql, function (error, result) {
-      if (error) {
-        reject(error)
-      } else {
-        resolve(result)
-      }
-    }, false, false, values);
+    baseConnector.sqlQuery(
+      ctx,
+      sql,
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      },
+      false,
+      false,
+      values
+    );
   });
 }
 
@@ -203,13 +205,22 @@ function insertIntoResultTable(dateNow, task) {
   return executeSql(`INSERT INTO ${cfgTableResult}(${columns.join(', ')}) VALUES(${placeholder.join(', ')});`, values);
 }
 
-afterAll(async function () {
+afterAll(async () => {
   const insertIds = Object.values(insertCases);
   const changesIds = Object.values(changesCases);
   const upsertIds = Object.values(upsertCases);
+  const updateIfIds = Object.values(updateIfCases);
 
-  const tableChangesIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...changesIds, ...insertIds];
-  const tableResultIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...getExpiredCase, ...getCountWithStatusCase, ...upsertIds];
+  const tableChangesIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...changesIds, ...insertIds, largeChangeCase];
+  const tableResultIds = [
+    ...emptyCallbacksCase,
+    ...documentsWithChangesCase,
+    ...getExpiredCase,
+    ...getCountWithStatusCase,
+    ...upsertIds,
+    ...updateIfIds,
+    ...oracleNullHandlingCases
+  ];
 
   const deletionPool = [
     deleteRowsByIds(cfgTableChanges, tableChangesIds),
@@ -219,17 +230,17 @@ afterAll(async function () {
 
   await Promise.allSettled(deletionPool);
   baseConnector.closePool?.();
-});
+}, 10000); //default timeout is 5000ms. increased to 10000ms to prevent timeout on Oracle DB
 
 // Assumed that at least default DB was installed and configured.
-describe('Base database connector', function () {
-  test('Availability of configured DB', async function () {
+describe('Base database connector', () => {
+  test('Availability of configured DB', async () => {
     const result = await baseConnector.healthCheck(ctx);
 
     expect(result.length).toEqual(1);
   });
 
-  test('Correct return format of requested rows', async function() {
+  test('Correct return format of requested rows', async () => {
     const result = await baseConnector.healthCheck(ctx);
 
     // The [[constructor]] field is referring to a parent class instance, so for Object-like values it is equal to itself.
@@ -242,39 +253,43 @@ describe('Base database connector', function () {
     expect(Object.values(result[0])[0]).toEqual(1);
   });
 
-  test('Correct return format of changing in DB', async function () {
-    const createTableSql = `CREATE TABLE test_table(num ${dbTypes.number()});`
+  test('Correct return format of changing in DB', async () => {
+    const createTableSql = `CREATE TABLE test_table(num ${dbTypes.number()});`;
     const alterTableSql = `INSERT INTO test_table VALUES(1);`;
 
     await executeSql(createTableSql);
     const result = await executeSql(alterTableSql);
 
-    expect(result).toEqual({ affectedRows: 1 });
+    expect(result).toEqual({affectedRows: 1});
   });
 
-  describe('DB tables existence', function () {
+  describe('DB tables existence', () => {
     const tables = {
-      [cfgTableResult]: constants.TABLE_RESULT_SCHEMA.map(column => { return { column_name: column } }),
-      [cfgTableChanges]: constants.TABLE_CHANGES_SCHEMA.map(column => { return { column_name: column } })
+      [cfgTableResult]: constants.TABLE_RESULT_SCHEMA.map(column => {
+        return {column_name: column};
+      }),
+      [cfgTableChanges]: constants.TABLE_CHANGES_SCHEMA.map(column => {
+        return {column_name: column};
+      })
     };
 
     for (const table in tables) {
-      test(`${table} table existence`, async function () {
+      test(`${table} table existence`, async () => {
         const result = await baseConnector.getTableColumns(ctx, table);
         for (const row of tables[table]) {
           expect(result).toContainEqual(row);
         }
       });
     }
-    
-    const table = "unused_table";
-    test(`${table} table absence`, async function () {
+
+    const table = 'unused_table';
+    test(`${table} table absence`, async () => {
       const result = await baseConnector.getTableColumns(ctx, table);
       expect(result).toEqual([]);
     });
   });
 
-  describe('Changes manipulations', function () {
+  describe('Changes manipulations', () => {
     const date = new Date();
     const index = 0;
     const user = {
@@ -285,27 +300,56 @@ describe('Base database connector', function () {
       view: false
     };
 
-    describe('Add changes', function () {
+    describe('Add changes', () => {
       for (const testCase in insertCases) {
-        test(`${testCase} rows inserted`, async function () {
-          const docId = insertCases[testCase];
-          const objChanges = createChanges(+testCase, date);
+        // Increase timeout for large inserts (5000+ rows can take longer on some databases)
+        const timeout = +testCase >= 5000 ? 15000 : 5000;
+        test(
+          `${testCase} rows inserted`,
+          async () => {
+            const docId = insertCases[testCase];
+            const objChanges = createChanges(+testCase, date);
 
-          await noRowsExistenceCheck(cfgTableChanges, docId);
+            await noRowsExistenceCheck(cfgTableChanges, docId);
 
-          await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
-          const result = await getRowsCountById(cfgTableChanges, docId);
+            await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
+            const result = await getRowsCountById(cfgTableChanges, docId);
 
-          expect(result).toEqual(objChanges.length);
-        });
+            expect(result).toEqual(objChanges.length);
+          },
+          timeout
+        );
       }
     });
 
-    describe('Get and delete changes', function () {
+    test('Insert change with large change_data (> 8188 bytes)', async () => {
+      const docId = largeChangeCase;
+      // Create string > 8188 bytes to trigger CLOB handling in Dameng
+      // VARCHAR_PREC in dmdb is 8188 bytes, strings longer than this are treated as CLOB
+      const largeString = 'A'.repeat(10000);
+      const objChanges = [
+        {
+          docid: docId,
+          change: largeString,
+          time: date,
+          user: 'uid-large',
+          useridoriginal: 'uid-large-orig'
+        }
+      ];
+
+      await noRowsExistenceCheck(cfgTableChanges, docId);
+
+      await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
+      const result = await getRowsCountById(cfgTableChanges, docId);
+
+      expect(result).toEqual(1);
+    });
+
+    describe('Get and delete changes', () => {
       const changesCount = 10;
       const objChanges = createChanges(changesCount, date);
 
-      test('Get changes in range', async function () {
+      test('Get changes in range', async () => {
         const docId = changesCases.range;
         const additionalChangesCount = 5;
         const dayBefore = new Date();
@@ -325,7 +369,7 @@ describe('Base database connector', function () {
         expect(resultByDate.length).toEqual(additionalChangesCount);
       });
 
-      test('Get changes index', async function () {
+      test('Get changes index', async () => {
         const docId = changesCases.index;
 
         await noRowsExistenceCheck(cfgTableChanges, docId);
@@ -335,11 +379,11 @@ describe('Base database connector', function () {
         const result = await baseConnector.getChangesIndexPromise(ctx, docId);
 
         // We created 10 changes rows, change_id: 0..9, changes index is MAX(change_id).
-        const expected = [{ change_id: 9 }];
+        const expected = [{change_id: 9}];
         expect(result).toEqual(expected);
       });
 
-      test('Delete changes', async function () {
+      test('Delete changes', async () => {
         const docId = changesCases.delete;
 
         await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
@@ -354,7 +398,7 @@ describe('Base database connector', function () {
       });
     });
 
-    test('Get empty callbacks' , async function () {
+    test('Get empty callbacks', async () => {
       const idCount = 5;
       const notNullCallbacks = idCount - 2;
 
@@ -383,24 +427,21 @@ describe('Base database connector', function () {
       expect(resultAfter.length).toEqual(resultBefore.length + idCount - notNullCallbacks);
     });
 
-    test('Get documents with changes', async function () {
+    test('Get documents with changes', async () => {
       const objChanges = createChanges(1, date);
 
       const resultBeforeNewRows = await baseConnector.getDocumentsWithChanges(ctx);
 
       for (const id of documentsWithChangesCase) {
         const task = createTask(id);
-        await Promise.all([
-          baseConnector.insertChangesPromise(ctx, objChanges, id, index, user),
-          insertIntoResultTable(date, task)
-        ]);
+        await Promise.all([baseConnector.insertChangesPromise(ctx, objChanges, id, index, user), insertIntoResultTable(date, task)]);
       }
 
       const resultAfterNewRows = await baseConnector.getDocumentsWithChanges(ctx);
       expect(resultAfterNewRows.length).toEqual(resultBeforeNewRows.length + documentsWithChangesCase.length);
     });
 
-    test('Get expired', async function () {
+    test('Get expired', async () => {
       const maxCount = 100;
       const dayBefore = new Date();
       dayBefore.setDate(dayBefore.getDate() - 1);
@@ -418,10 +459,10 @@ describe('Base database connector', function () {
       expect(resultAfterNewRows.length).toEqual(resultBeforeNewRows.length + getExpiredCase.length);
     });
 
-    test('Get Count With Status', async function () {
+    test('Get Count With Status', async () => {
       let countWithStatus;
-      let unknownStatus = 99;//to avoid collision with running server
-      let EXEC_TIMEOUT = 30000 + utils.getConvertionTimeout(undefined);
+      const unknownStatus = 99; //to avoid collision with running server
+      const EXEC_TIMEOUT = 30000 + utils.getConvertionTimeout(undefined);
       countWithStatus = await baseConnector.getCountWithStatus(ctx, unknownStatus, EXEC_TIMEOUT);
       expect(countWithStatus).toEqual(0);
       for (const id of getCountWithStatusCase) {
@@ -434,8 +475,8 @@ describe('Base database connector', function () {
     });
   });
 
-  describe('upsert() method', function () {
-    test('New row inserted', async function () {
+  describe('upsert() method', () => {
+    test('New row inserted', async () => {
       const task = createTask(upsertCases.insert);
 
       await noRowsExistenceCheck(cfgTableResult, task.key);
@@ -443,7 +484,7 @@ describe('Base database connector', function () {
       const result = await baseConnector.upsert(ctx, task);
 
       // isInsert should be true because of insert operation, insertId should be 1 by default.
-      const expected = { isInsert: true, insertId: 1 };
+      const expected = {isInsert: true, insertId: 1};
       expect(result).toEqual(expected);
 
       const insertedResult = await getRowsCountById(cfgTableResult, task.key);
@@ -451,7 +492,7 @@ describe('Base database connector', function () {
       expect(insertedResult).toEqual(1);
     });
 
-    test('Row updated', async function () {
+    test('Row updated', async () => {
       const task = createTask(upsertCases.update, '', 'some-url');
 
       await noRowsExistenceCheck(cfgTableResult, task.key);
@@ -463,13 +504,90 @@ describe('Base database connector', function () {
       const result = await baseConnector.upsert(ctx, task);
 
       // isInsert should be false because of update operation, insertId should be 2 by updating clause.
-      const expected = { isInsert: false, insertId: 2 };
+      const expected = {isInsert: false, insertId: 2};
       expect(result).toEqual(expected);
 
       const updatedRow = await executeSql(`SELECT id, baseurl FROM ${cfgTableResult} WHERE id = '${task.key}';`);
 
-      const expectedUrlChanges = [{ id: task.key, baseurl: 'some-updated-url' }];
+      const expectedUrlChanges = [{id: task.key, baseurl: 'some-updated-url'}];
       expect(updatedRow).toEqual(expectedUrlChanges);
+    });
+  });
+
+  describe('Oracle NCLOB null handling', () => {
+    const nullHandlingCase = 'baseConnector-oracle-nclob-null-handling';
+
+    test('Empty callback is retrieved as empty string (not null)', async () => {
+      const date = new Date();
+      const task = createTask(nullHandlingCase, ''); // Empty callback
+
+      await noRowsExistenceCheck(cfgTableResult, task.key);
+      await insertIntoResultTable(date, task);
+
+      // Retrieve the row and check callback field
+      const result = await executeSql(`SELECT callback, baseurl FROM ${cfgTableResult} WHERE id = '${task.key}';`);
+
+      expect(result.length).toEqual(1);
+      // Oracle should normalize null NCLOB to empty string
+      expect(result[0].callback).toEqual('');
+      expect(result[0].baseurl).toEqual('');
+      // Verify they are strings, not null
+      expect(typeof result[0].callback).toEqual('string');
+      expect(typeof result[0].baseurl).toEqual('string');
+    });
+
+    test('Null callback does not cause TypeError in getCallbackByUserIndex', async () => {
+      const date = new Date();
+      const task = createTask(nullHandlingCase + '-2', '');
+
+      await insertIntoResultTable(date, task);
+
+      const result = await executeSql(`SELECT callback FROM ${cfgTableResult} WHERE id = '${task.key}';`);
+
+      // This should not throw TypeError
+      const userCallback = new baseConnector.UserCallback();
+      expect(() => {
+        userCallback.getCallbackByUserIndex(ctx, result[0].callback, 1);
+      }).not.toThrow();
+
+      const callbackResult = userCallback.getCallbackByUserIndex(ctx, result[0].callback, 1);
+      expect(callbackResult).toEqual('');
+    });
+  });
+
+  describe('updateIf() method', () => {
+    test('Update with NOT_EMPTY callback mask', async () => {
+      const date = new Date();
+      const taskWithCallback = createTask(updateIfCases.notEmpty, 'http://example.com/callback');
+      const taskEmptyCallback = createTask(updateIfCases.emptyCallback, '');
+
+      // Insert two rows: one with callback, one without
+      await Promise.all([insertIntoResultTable(date, taskWithCallback), insertIntoResultTable(date, taskEmptyCallback)]);
+
+      // Update mask: only update rows with non-empty callback and status=None
+      const mask = new taskResult.TaskResultData();
+      mask.tenant = ctx.tenant;
+      mask.key = taskWithCallback.key;
+      mask.status = commonDefines.FileStatus.None;
+      mask.callback = 'NOT_EMPTY';
+
+      // Update task: change status to SaveVersion
+      const updateTask = new taskResult.TaskResultData();
+      updateTask.status = commonDefines.FileStatus.SaveVersion;
+      updateTask.statusInfo = constants.NO_ERROR;
+
+      const result = await taskResult.updateIf(ctx, updateTask, mask);
+
+      // Should update exactly 1 row (the one with callback)
+      expect(result.affectedRows).toEqual(1);
+
+      // Verify the row with callback was updated
+      const updatedRow = await executeSql(`SELECT status FROM ${cfgTableResult} WHERE id = '${taskWithCallback.key}';`);
+      expect(updatedRow[0].status).toEqual(commonDefines.FileStatus.SaveVersion);
+
+      // Verify the row without callback was NOT updated
+      const notUpdatedRow = await executeSql(`SELECT status FROM ${cfgTableResult} WHERE id = '${taskEmptyCallback.key}';`);
+      expect(notUpdatedRow[0].status).toEqual(commonDefines.FileStatus.None);
     });
   });
 });
