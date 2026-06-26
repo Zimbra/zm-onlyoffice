@@ -453,7 +453,7 @@ workflows:
             - docker-dev-registry
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
       - develop_u24:
           requires:
@@ -463,7 +463,7 @@ workflows:
             - build-info
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
       - develop_u22:
           requires:
@@ -473,7 +473,7 @@ workflows:
             - build-info
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
       - develop_u20:
           requires:
@@ -483,7 +483,7 @@ workflows:
             - build-info
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
       - develop_u18:
           requires:
@@ -493,7 +493,7 @@ workflows:
             - build-info
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
       - develop_c9:
           requires:
@@ -503,7 +503,7 @@ workflows:
             - build-info
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
       - develop_c8:
           requires:
@@ -513,7 +513,7 @@ workflows:
             - build-info
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
       - develop_c7:
           requires:
@@ -523,7 +523,7 @@ workflows:
             - build-info
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
       - publish_packages:
           requires:
@@ -539,7 +539,7 @@ workflows:
             - nexus-dev-artifactory
           filters:
             branches:
-              only: ZCICD-34
+              only: master
 
   # ---------------------------------------------------------------------------
   # main workflow: all non-master branches. Approval-gated build + OCI upload.
@@ -550,7 +550,7 @@ workflows:
           type: approval
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - checkout:
           requires:
@@ -559,7 +559,7 @@ workflows:
             - docker-dev-registry
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - build_u24:
           requires:
@@ -569,7 +569,7 @@ workflows:
             - oracle
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - build_u22:
           requires:
@@ -579,7 +579,7 @@ workflows:
             - oracle
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - build_u20:
           requires:
@@ -589,7 +589,7 @@ workflows:
             - oracle
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - build_u18:
           requires:
@@ -599,7 +599,7 @@ workflows:
             - oracle
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - build_c9:
           requires:
@@ -609,7 +609,7 @@ workflows:
             - oracle
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - build_c8:
           requires:
@@ -619,7 +619,7 @@ workflows:
             - oracle
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - build_c7:
           requires:
@@ -629,7 +629,7 @@ workflows:
             - oracle
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - deploy_s3_hold:
           type: approval
@@ -643,7 +643,7 @@ workflows:
             - build_c7
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
 
       - deploy_s3:
           context:
@@ -652,4 +652,4 @@ workflows:
             - deploy_s3_hold
           filters:
             branches:
-              ignore: ZCICD-34
+              ignore: master
