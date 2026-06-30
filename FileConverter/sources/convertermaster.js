@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2019
+ * (c) Copyright Ascensio System SIA 2010-2024
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
+ * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -39,22 +39,22 @@ const operationContext = require('./../../Common/sources/operationContext');
 if (cluster.isMaster) {
   const fs = require('fs');
   const co = require('co');
-  const numCPUs = require('os').cpus().length;
-  const configCommon = require('config');
-  const config = configCommon.get('FileConverter.converter');
+  const os = require('os');
+  const config = require('config');
   const license = require('./../../Common/sources/license');
-  const tenantManager = require('./../../Common/sources/tenantManager');
 
-  const cfgLicenseFile = configCommon.get('license.license_file');
+  const cfgLicenseFile = config.get('license.license_file');
+  const cfgMaxProcessCount = config.get('FileConverter.converter.maxprocesscount');
 
-  const cfgMaxProcessCount = config.get('maxprocesscount');
   var workersCount = 0;
-  const readLicense = function* () {
-    workersCount = Math.ceil(numCPUs * cfgMaxProcessCount);
-    if (!tenantManager.isMultitenantMode()) {
-      let [licenseInfo] = yield* license.readLicense(cfgLicenseFile);
-      workersCount = Math.min(licenseInfo.count, workersCount);
-    }
+  const readLicense = async function () {
+    const numCPUs = os.cpus().length;
+    const availableParallelism = os.availableParallelism?.();
+    operationContext.global.logger.warn('num of CPUs: %d; availableParallelism: %s', numCPUs, availableParallelism);
+    workersCount = Math.ceil((availableParallelism || numCPUs) * cfgMaxProcessCount);
+    let [licenseInfo] = await license.readLicense(cfgLicenseFile);
+    workersCount = Math.min(licenseInfo.count, workersCount);
+    //todo send license to workers for multi-tenancy
   };
   const updateWorkers = () => {
     var i;
@@ -73,16 +73,14 @@ if (cluster.isMaster) {
       }
     }
   };
-  const updateLicense = () => {
-    return co(function*() {
-      try {
-        yield* readLicense();
-        operationContext.global.logger.warn('update cluster with %s workers', workersCount);
-        updateWorkers();
-      } catch (err) {
-        operationContext.global.logger.error('updateLicense error: %s', err.stack);
-      }
-    });
+  const updateLicense = async () => {
+    try {
+      await readLicense();
+      operationContext.global.logger.warn('update cluster with %s workers', workersCount);
+      updateWorkers();
+    } catch (err) {
+      operationContext.global.logger.error('updateLicense error: %s', err.stack);
+    }
   };
 
   cluster.on('exit', (worker, code, signal) => {
@@ -92,10 +90,8 @@ if (cluster.isMaster) {
 
   updateLicense();
 
-  if (!tenantManager.isMultitenantMode()) {
-    fs.watchFile(cfgLicenseFile, updateLicense);
-    setInterval(updateLicense, 86400000);
-  }
+  fs.watchFile(cfgLicenseFile, updateLicense);
+  setInterval(updateLicense, 86400000);
 } else {
   const converter = require('./converter');
   converter.run();

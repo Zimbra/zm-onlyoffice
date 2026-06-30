@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2019
+ * (c) Copyright Ascensio System SIA 2010-2024
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
+ * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -32,8 +32,7 @@
 
 'use strict';
 
-const configCommon = require('config');
-var config = configCommon.get('services.CoAuthoring');
+const config = require('config');
 var co = require('co');
 var cron = require('cron');
 var ms = require('ms');
@@ -48,13 +47,13 @@ var commondefines = require('./../../Common/sources/commondefines');
 var queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 var operationContext = require('./../../Common/sources/operationContext');
 var pubsubService = require('./pubsubRabbitMQ');
+const sqlBase = require("./databaseConnectors/baseConnector");
 
-var cfgExpFilesCron = config.get('expire.filesCron');
-var cfgExpDocumentsCron = config.get('expire.documentsCron');
-var cfgExpFiles = config.get('expire.files');
-var cfgExpFilesRemovedAtOnce = config.get('expire.filesremovedatonce');
-var cfgForceSaveEnable = config.get('autoAssembly.enable');
-var cfgForceSaveStep = ms(config.get('autoAssembly.step'));
+var cfgExpFilesCron = config.get('services.CoAuthoring.expire.filesCron');
+var cfgExpDocumentsCron = config.get('services.CoAuthoring.expire.documentsCron');
+var cfgExpFiles = config.get('services.CoAuthoring.expire.files');
+var cfgExpFilesRemovedAtOnce = config.get('services.CoAuthoring.expire.filesremovedatonce');
+var cfgForceSaveStep = ms(config.get('services.CoAuthoring.autoAssembly.step'));
 
 function getCronStep(cronTime){
   let cronJob = new cron.CronJob(cronTime, function(){});
@@ -64,7 +63,7 @@ function getCronStep(cronTime){
 let expFilesStep = getCronStep(cfgExpFilesCron);
 let expDocumentsStep = getCronStep(cfgExpDocumentsCron);
 
-var checkFileExpire = function() {
+var checkFileExpire = function(expireSeconds) {
   return co(function* () {
     let ctx = new operationContext.Context();
     try {
@@ -74,16 +73,19 @@ var checkFileExpire = function() {
       var currentRemovedCount;
       do {
         currentRemovedCount = 0;
-        expired = yield taskResult.getExpired(ctx, cfgExpFilesRemovedAtOnce, cfgExpFiles);
+        expired = yield taskResult.getExpired(ctx, cfgExpFilesRemovedAtOnce, expireSeconds ?? cfgExpFiles);
         for (var i = 0; i < expired.length; ++i) {
           let tenant = expired[i].tenant;
           let docId = expired[i].id;
-          ctx.init(tenant, docId, ctx.userId);
+          let shardKey = sqlBase.DocumentAdditional.prototype.getShardKey(expired[i].additional);
+          let wopiSrc = sqlBase.DocumentAdditional.prototype.getWopiSrc(expired[i].additional);
+          ctx.init(tenant, docId, ctx.userId, shardKey, wopiSrc);
+          yield ctx.initTenantCache();
           //todo tenant
-          //проверяем что никто не сидит в документе
+          //check that no one is in the document
           let editorsCount = yield docsCoServer.getEditorsCountPromise(ctx, docId);
           if(0 === editorsCount){
-            if (yield canvasService.cleanupCache(ctx)) {
+            if (yield canvasService.cleanupCache(ctx, docId)) {
               currentRemovedCount++;
             }
           } else {
@@ -120,9 +122,11 @@ var checkDocumentExpire = function() {
           let docId = expiredKeys[i][1];
           if (docId) {
             ctx.init(tenant, docId, ctx.userId);
+            yield ctx.initTenantCache();
             var hasChanges = yield docsCoServer.hasChanges(ctx, docId);
             if (hasChanges) {
-              yield docsCoServer.createSaveTimer(ctx, docId, null, null, queue, true);
+              //todo opt_initShardKey from getDocumentPresenceExpired data or from db
+              yield docsCoServer.createSaveTimer(ctx, docId, null, null, null, queue, true, true);
               startSaveCount++;
             } else {
               yield docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId);
@@ -169,8 +173,11 @@ let forceSaveTimeout = function() {
           let docId = expiredKeys[i][1];
           if (docId) {
             ctx.init(tenant, docId, ctx.userId);
+            yield ctx.initTenantCache();
+            //todo opt_initShardKey from ForceSave data or from db
             actions.push(docsCoServer.startForceSave(ctx, docId, commondefines.c_oAscForceSaveTypes.Timeout,
-                                                            undefined, undefined, undefined, undefined, undefined, undefined, queue, pubsub));
+              undefined, undefined, undefined, undefined,
+              undefined, undefined, undefined, undefined, queue, pubsub, undefined, true));
           }
         }
         yield Promise.all(actions);
@@ -199,8 +206,7 @@ let forceSaveTimeout = function() {
 exports.startGC = function() {
   setTimeout(checkDocumentExpire, expDocumentsStep);
   setTimeout(checkFileExpire, expFilesStep);
-  if (cfgForceSaveEnable) {
-    setTimeout(forceSaveTimeout, cfgForceSaveStep);
-  }
+  setTimeout(forceSaveTimeout, cfgForceSaveStep);
 };
 exports.getCronStep = getCronStep;
+exports.checkFileExpire = checkFileExpire;

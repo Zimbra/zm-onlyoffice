@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2019
+ * (c) Copyright Ascensio System SIA 2010-2024
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
+ * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -32,14 +32,16 @@
 
 'use strict';
 
+const config = require("config");
 const constants = require('./constants');
 
 function InputCommand(data, copyExplicit) {
   //must be set explicitly to prevent vulnerability(downloadAs(with url) creates request to integrator with authorization)
   this['withAuthorization'] = undefined;//bool
-  this['isbuilder'] = undefined;//bool
   this['externalChangeInfo'] = undefined;//zero DB changes case: set password, undo all changes
   this['wopiParams'] = undefined;
+  this['builderParams'] = undefined;
+  this['userconnectiondocid'] = undefined;
   if (data) {
     this['c'] = data['c'];
     this['id'] = data['id'];
@@ -93,6 +95,7 @@ function InputCommand(data, copyExplicit) {
       this['forcesave'] = undefined;
     }
     this['userdata'] = data['userdata'];
+    this['formdata'] = data['formdata'];
     this['inline'] = data['inline'];
     this['password'] = data['password'];
     this['savepassword'] = data['savepassword'];
@@ -106,11 +109,15 @@ function InputCommand(data, copyExplicit) {
     this['status_info_in'] = data['status_info_in'];
     this['attempt'] = data['attempt'];
     this['convertToOrigin'] = data['convertToOrigin'];
+    this['isSaveAs'] = data['isSaveAs'];
+    this['saveAsPath'] = data['saveAsPath'];
     if (copyExplicit) {
       this['withAuthorization'] = data['withAuthorization'];
-      this['isbuilder'] = data['isbuilder'];
       this['externalChangeInfo'] = data['externalChangeInfo'];
       this['wopiParams'] = data['wopiParams'];
+      this['builderParams'] = data['builderParams'];
+      this['userconnectiondocid'] = data['userconnectiondocid'];
+      this['originformat'] = data['originformat'];
     }
   } else {
     this['c'] = undefined;//string command
@@ -152,6 +159,7 @@ function InputCommand(data, copyExplicit) {
     this['useractionindex'] = undefined;
     this['forcesave'] = undefined;
     this['userdata'] = undefined;
+    this['formdata'] = undefined;
     this['inline'] = undefined;//content disposition
     this['password'] = undefined;
     this['savepassword'] = undefined;
@@ -165,6 +173,9 @@ function InputCommand(data, copyExplicit) {
     this['status_info_in'] = undefined;
     this['attempt'] = undefined;
     this['convertToOrigin'] = undefined;
+    this['originformat'] = undefined;
+    this['isSaveAs'] = undefined;
+    this['saveAsPath'] = undefined;
   }
 }
 InputCommand.prototype = {
@@ -221,6 +232,12 @@ InputCommand.prototype = {
   },
   setFormat: function(data) {
     this['format'] = data;
+  },
+  getOriginFormat: function() {
+    return this['originformat'];
+  },
+  setOriginFormat: function(data) {
+    this['originformat'] = data;
   },
   getUrl: function() {
     return this['url'];
@@ -330,6 +347,12 @@ InputCommand.prototype = {
   setUserConnectionId: function(data) {
     this['userconnectionid'] = data;
   },
+  getUserConnectionDocId: function() {
+    return this['userconnectiondocid'];
+  },
+  setUserConnectionDocId: function(data) {
+    this['userconnectiondocid'] = data;
+  },
   getResponseKey: function() {
     return this['responsekey'];
   },
@@ -345,8 +368,12 @@ InputCommand.prototype = {
   getJsonParams: function() {
     return this['jsonparams'];
   },
-  setJsonParams: function(data) {
-    this['jsonparams'] = data;
+  appendJsonParams: function (data) {
+    if (this['jsonparams']) {
+      config.util.extendDeep(this['jsonparams'], data);
+    } else {
+      this['jsonparams'] = data;
+    }
   },
   getLCID: function() {
     return this['lcid'];
@@ -366,9 +393,15 @@ InputCommand.prototype = {
   setUserActionIndex: function(data) {
     this['useractionindex'] = data;
   },
+  /**
+   * @return {CForceSaveData | null}
+   */
   getForceSave: function() {
     return this['forcesave'];
   },
+  /**
+   * @param {CForceSaveData} data
+   */
   setForceSave: function(data) {
     this['forcesave'] = data;
   },
@@ -377,6 +410,12 @@ InputCommand.prototype = {
   },
   setUserData: function(data) {
     this['userdata'] = data;
+  },
+  getFormData: function() {
+    return this['formdata'];
+  },
+  setFormData: function(data) {
+    this['formdata'] = data;
   },
   getInline: function() {
     return this['inline'];
@@ -432,12 +471,6 @@ InputCommand.prototype = {
   setNoBase64: function(data) {
     this['nobase64'] = data;
   },
-  getIsBuilder: function() {
-    return this['isbuilder'];
-  },
-  setIsBuilder: function(data) {
-    this['isbuilder'] = data;
-  },
   getStatusInfoIn: function() {
     return this['status_info_in'];
   },
@@ -462,6 +495,12 @@ InputCommand.prototype = {
   setExternalChangeInfo: function(data) {
     this['externalChangeInfo'] = data;
   },
+  getBuilderParams: function() {
+    return this['builderParams'];
+  },
+  setBuilderParams: function(data) {
+    this['builderParams'] = data;
+  },
   getWopiParams: function() {
     return this['wopiParams'];
   },
@@ -473,6 +512,18 @@ InputCommand.prototype = {
   },
   setConvertToOrigin: function(data) {
     this['convertToOrigin'] = data;
+  },
+  getIsSaveAs: function() {
+    return this['isSaveAs'];
+  },
+  setIsSaveAs: function(data) {
+    this['isSaveAs'] = data;
+  },
+  getSaveAsPath: function() {
+    return this['saveAsPath'];
+  },
+  setSaveAsPath: function(data) {
+    this['saveAsPath'] = data;
   }
 };
 
@@ -798,6 +849,7 @@ function OutputSfcData(key) {
   this['actions'] = undefined;
   this['mailMerge'] = undefined;
   this['userdata'] = undefined;
+  this['formdata'] = undefined;
   this['lastsave'] = undefined;
   this['notmodified'] = undefined;
   this['forcesavetype'] = undefined;
@@ -864,6 +916,12 @@ OutputSfcData.prototype.getUserData= function() {
 };
 OutputSfcData.prototype.setUserData = function(data) {
   return this['userdata'] = data;
+};
+OutputSfcData.prototype.getFormsDataUrl= function() {
+  return this['formsdataurl'];
+};
+OutputSfcData.prototype.setFormsDataUrl = function(data) {
+  return this['formsdataurl'] = data;
 };
 OutputSfcData.prototype.getLastSave = function() {
   return this['lastsave']
@@ -1089,7 +1147,8 @@ const c_oAscForceSaveTypes = {
   Command: 0,
   Button: 1,
   Timeout: 2,
-  Form: 3
+  Form: 3,
+  Internal: 4
 };
 const c_oAscUrlTypes = {
   Session: 0,
@@ -1109,6 +1168,17 @@ const c_oAscUnlockRes = {
   Locked: 0,
   Unlocked: 1,
   Empty: 2
+};
+const FileStatus = {
+  None: 0,
+  Ok: 1,
+  WaitQueue: 2,
+  NeedParams: 3,
+  Err: 5,
+  ErrToReload: 6,
+  SaveVersion: 7,
+  UpdateVersion: 8,
+  NeedPassword: 9
 };
 
 const buildVersion = '4.1.2';
@@ -1136,5 +1206,6 @@ exports.c_oAscUrlTypes = c_oAscUrlTypes;
 exports.c_oAscSecretType = c_oAscSecretType;
 exports.c_oAscQueueType = c_oAscQueueType;
 exports.c_oAscUnlockRes = c_oAscUnlockRes;
+exports.FileStatus = FileStatus;
 exports.buildVersion = buildVersion;
 exports.buildNumber = buildNumber;

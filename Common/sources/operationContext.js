@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2019
+ * (c) Copyright Ascensio System SIA 2010-2024
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
+ * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -41,37 +41,52 @@ function Context(){
   this.logger = logger.getLogger('nodeJS');
   this.initDefault();
 }
-Context.prototype.init = function(tenant, docId, userId) {
+Context.prototype.init = function(tenant, docId, userId, opt_shardKey, opt_WopiSrc) {
   this.setTenant(tenant);
   this.setDocId(docId);
   this.setUserId(userId);
+  this.setShardKey(opt_shardKey);
+  this.setWopiSrc(opt_WopiSrc);
+
+  this.config = null;
+  this.secret = null;
+  this.license = null;
 };
 Context.prototype.initDefault = function() {
-  this.init(tenantManager.getDefautTenant(), constants.DEFAULT_DOC_ID, constants.DEFAULT_USER_ID);
+  this.init(tenantManager.getDefautTenant(), constants.DEFAULT_DOC_ID, constants.DEFAULT_USER_ID, undefined);
 };
 Context.prototype.initFromConnection = function(conn) {
   let tenant = tenantManager.getTenantByConnection(this, conn);
   let docId = conn.docid;
   if (!docId) {
-    const docIdParsed = constants.DOC_ID_SOCKET_PATTERN.exec(conn.url);
+    let handshake = conn.handshake;
+    const docIdParsed = constants.DOC_ID_SOCKET_PATTERN.exec(handshake.url);
     if (docIdParsed && 1 < docIdParsed.length) {
       docId = docIdParsed[1];
     }
   }
   let userId = conn.user?.id;
-  this.init(tenant, docId || this.docId, userId || this.userId);
+  let shardKey = utils.getShardKeyByConnection(this, conn);
+  let wopiSrc = utils.getWopiSrcByConnection(this, conn);
+  this.init(tenant, docId || this.docId, userId || this.userId, shardKey, wopiSrc);
 };
 Context.prototype.initFromRequest = function(req) {
   let tenant = tenantManager.getTenantByRequest(this, req);
-  this.init(tenant, this.docId, this.userId);
+  let shardKey = utils.getShardKeyByRequest(this, req);
+  let wopiSrc = utils.getWopiSrcByRequest(this, req);
+  this.init(tenant, this.docId, this.userId, shardKey, wopiSrc);
 };
 Context.prototype.initFromTaskQueueData = function(task) {
   let ctx = task.getCtx();
-  this.init(ctx.tenant, ctx.docId, ctx.userId);
+  this.init(ctx.tenant, ctx.docId, ctx.userId, ctx.shardKey, ctx.wopiSrc);
 };
 Context.prototype.initFromPubSub = function(data) {
   let ctx = data.ctx;
-  this.init(ctx.tenant, ctx.docId, ctx.userId);
+  this.init(ctx.tenant, ctx.docId, ctx.userId, ctx.shardKey, ctx.wopiSrc);
+};
+Context.prototype.initTenantCache = async function() {
+  this.config = await tenantManager.getTenantConfig(this);
+  //todo license and secret
 };
 
 Context.prototype.setTenant = function(tenant) {
@@ -85,6 +100,52 @@ Context.prototype.setDocId = function(docId) {
 Context.prototype.setUserId = function(userId) {
   this.userId = userId;
   this.logger.addContext('USERID', userId);
+};
+Context.prototype.setShardKey = function(shardKey) {
+  this.shardKey = shardKey;
+};
+Context.prototype.setWopiSrc = function(wopiSrc) {
+  this.wopiSrc = wopiSrc;
+};
+Context.prototype.toJSON = function() {
+  return {
+    tenant: this.tenant,
+    docId: this.docId,
+    userId: this.userId,
+    shardKey: this.shardKey,
+    wopiSrc: this.wopiSrc
+  }
+};
+Context.prototype.getCfg = function(property, defaultValue) {
+  if (this.config){
+    return getImpl(this.config, property) ?? defaultValue;
+  }
+  return defaultValue;
+};
+
+/**
+ * Underlying get mechanism
+ *
+ * @private
+ * @method getImpl
+ * @param object {object} - Object to get the property for
+ * @param property {string | array[string]} - The property name to get (as an array or '.' delimited string)
+ * @return value {*} - Property value, including undefined if not defined.
+ */
+function getImpl(object, property) {
+  //from https://github.com/node-config/node-config/blob/a8b91ac86b499d11b90974a2c9915ce31266044a/lib/config.js#L137
+  var t = this,
+    elems = Array.isArray(property) ? property : property.split('.'),
+    name = elems[0],
+    value = object[name];
+  if (elems.length <= 1) {
+    return value;
+  }
+  // Note that typeof null === 'object'
+  if (value === null || typeof value !== 'object') {
+    return undefined;
+  }
+  return getImpl(value, elems.slice(1));
 };
 
 exports.Context = Context;

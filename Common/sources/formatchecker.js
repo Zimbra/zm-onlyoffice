@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2019
+ * (c) Copyright Ascensio System SIA 2010-2024
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
+ * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -34,10 +34,12 @@
 
 var path = require('path');
 var constants = require('./constants');
+const {open} = require("node:fs/promises");
 
 function getImageFormatBySignature(buffer) {
   var length = buffer.length;
-  var startText = buffer.toString('ascii', 0, 20);
+  //1000 for svg(xml header and creator comment)
+  var startText = buffer.toString('ascii', 0, 1000);
 
   //jpeg
   // Hex: FF D8 FF
@@ -187,14 +189,17 @@ function getImageFormatBySignature(buffer) {
   }
 
   //svg
-  //работает для svg сделаных в редакторе, внешние svg могуть быть с пробелами в начале
-  if (0 == startText.indexOf('<svg')) {
+  //todo sax parser
+  if (-1 !== startText.indexOf('<svg')) {
     return constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_SVG;
   }
 
   return constants.AVS_OFFICESTUDIO_FILE_UNKNOWN;
 }
 exports.getFormatFromString = function(ext) {
+  if (!ext) {
+    return constants.AVS_OFFICESTUDIO_FILE_UNKNOWN;
+  }
   switch (ext.toLowerCase()) {
     case 'docx':
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOCX;
@@ -213,6 +218,7 @@ exports.getFormatFromString = function(ext) {
     case 'html':
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_HTML;
     case 'mht':
+    case 'mhtml':
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_MHT;
     case 'epub':
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_EPUB;
@@ -256,6 +262,8 @@ exports.getFormatFromString = function(ext) {
       return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODP_FLAT;
     case 'otp':
       return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_OTP;
+    case 'odg':
+      return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODG;
 
     case 'xlsx':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSX;
@@ -272,7 +280,7 @@ exports.getFormatFromString = function(ext) {
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLTX;
     case 'xltm':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLTM;
-    case 'xltb':
+    case 'xlsb':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSB;
     case 'fods':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_ODS_FLAT;
@@ -333,6 +341,18 @@ exports.getFormatFromString = function(ext) {
       return constants.AVS_OFFICESTUDIO_FILE_OTHER_OOXML;
     case 'odf':
       return constants.AVS_OFFICESTUDIO_FILE_OTHER_ODF;
+    case 'vsdx':
+      return constants.AVS_OFFICESTUDIO_FILE_DRAW_VSDX;
+    case 'vssx':
+      return constants.AVS_OFFICESTUDIO_FILE_DRAW_VSSX;
+    case 'vstx':
+      return constants.AVS_OFFICESTUDIO_FILE_DRAW_VSTX;
+    case 'vsdm':
+      return constants.AVS_OFFICESTUDIO_FILE_DRAW_VSDM;
+    case 'vssm':
+      return constants.AVS_OFFICESTUDIO_FILE_DRAW_VSSM;
+    case 'vstm':
+      return constants.AVS_OFFICESTUDIO_FILE_DRAW_VSTM;
     default:
       return constants.AVS_OFFICESTUDIO_FILE_UNKNOWN;
   }
@@ -381,6 +401,8 @@ exports.getStringFromFormat = function(format) {
       return 'oform';
     case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOCXF:
       return 'docxf';
+    case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_OFORM_PDF:
+      return 'pdf';
 
     case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTX:
       return 'pptx';
@@ -404,6 +426,8 @@ exports.getStringFromFormat = function(format) {
       return 'otp';
     case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTX_PACKAGE:
       return 'xml';
+    case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODG:
+      return 'odg';
 
     case constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSX:
       return 'xlsx';
@@ -481,6 +505,7 @@ exports.getStringFromFormat = function(format) {
     case constants.AVS_OFFICESTUDIO_FILE_CANVAS_WORD:
     case constants.AVS_OFFICESTUDIO_FILE_CANVAS_SPREADSHEET:
     case constants.AVS_OFFICESTUDIO_FILE_CANVAS_PRESENTATION:
+    case constants.AVS_OFFICESTUDIO_FILE_CANVAS_PDF:
       return 'bin';
     case constants.AVS_OFFICESTUDIO_FILE_OTHER_OLD_DOCUMENT:
     case constants.AVS_OFFICESTUDIO_FILE_TEAMLAB_DOCY:
@@ -495,30 +520,30 @@ exports.getStringFromFormat = function(format) {
       return 'ooxml';
     case constants.AVS_OFFICESTUDIO_FILE_OTHER_ODF:
       return 'odf';
+    case constants.AVS_OFFICESTUDIO_FILE_DRAW_VSDX:
+      return 'vsdx';
+    case constants.AVS_OFFICESTUDIO_FILE_DRAW_VSSX:
+      return 'vssx';
+    case constants.AVS_OFFICESTUDIO_FILE_DRAW_VSTX:
+      return 'vstx';
+    case constants.AVS_OFFICESTUDIO_FILE_DRAW_VSDM:
+      return 'vsdm';
+    case constants.AVS_OFFICESTUDIO_FILE_DRAW_VSSM:
+      return 'vssm';
+    case constants.AVS_OFFICESTUDIO_FILE_DRAW_VSTM:
+      return 'vstm';
     default:
       return '';
   }
 };
-exports.getImageFormat = function(ctx, buffer, optExt) {
+exports.getImageFormat = function(ctx, buffer) {
   var format = constants.AVS_OFFICESTUDIO_FILE_UNKNOWN;
   try {
     //signature
     format = getImageFormatBySignature(buffer);
-    //возвращаем тип по расширению
-    if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN == format && optExt) {
-      if ('.svg' == optExt) {
-        format = constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_SVG;
-      } else {
-        //пробуем по расширению
-        if (optExt.length > 0 && '.' == optExt[0]) {
-          optExt = optExt.substring(1);
-        }
-        format = exports.getFormatFromString(optExt);
-      }
-    }
   }
   catch (e) {
-    ctx.logger.error('error getImageFormat ext=%s: %s', optExt, e.stack);
+    ctx.logger.error('error getImageFormat: %s', e.stack);
   }
   return format;
 };
@@ -544,6 +569,7 @@ exports.isOOXFormat = function(format) {
   || constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOTM === format
   || constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_OFORM === format
   || constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOCXF === format
+  || constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_OFORM_PDF === format
   || constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTX === format
   || constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPSX === format
   || constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTM === format
@@ -555,3 +581,51 @@ exports.isOOXFormat = function(format) {
   || constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLTX === format
   || constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLTM === format;
 };
+exports.isBrowserEditorFormat = function(format) {
+  return constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF === format ||
+    constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDFA === format ||
+    constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_DJVU === format ||
+    constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_XPS === format;
+};
+function getDocumentFormatBySignature(buffer) {
+  if (!buffer) {
+    return constants.AVS_OFFICESTUDIO_FILE_UNKNOWN;
+  }
+  let text = buffer.toString("latin1");
+  // Check for binary DOCT format.
+  if (4 <= text.length && text[0] === 'D' && text[1] === 'O' && text[2] === 'C' && text[3] === 'Y') {
+    return constants.AVS_OFFICESTUDIO_FILE_CANVAS_WORD;
+  }
+
+  // Check for binary XLST format
+  if (4 <= text.length && text[0] === 'X' && text[1] === 'L' && text[2] === 'S' && text[3] === 'Y') {
+    return constants.AVS_OFFICESTUDIO_FILE_CANVAS_SPREADSHEET;
+  }
+
+  // Check for binary PPTT format
+  if (4 <= text.length && text[0] === 'P' && text[1] === 'P' && text[2] === 'T' && text[3] === 'Y') {
+    return constants.AVS_OFFICESTUDIO_FILE_CANVAS_PRESENTATION;
+  }
+
+  // Unknown format
+  return constants.AVS_OFFICESTUDIO_FILE_UNKNOWN;
+};
+async function getDocumentFormatByFile(file) {
+  let firstBytesLen = 100;
+  let buffer;
+  let fd;
+  try {
+    fd = await open(file, 'r');
+    const stream = fd.createReadStream({ start: 0, end: firstBytesLen });
+    let chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.from(chunk));
+    }
+    buffer = Buffer.concat(chunks);
+  } finally {
+    await fd?.close();
+  }
+  return getDocumentFormatBySignature(buffer);
+};
+exports.getDocumentFormatBySignature = getDocumentFormatBySignature;
+exports.getDocumentFormatByFile = getDocumentFormatByFile

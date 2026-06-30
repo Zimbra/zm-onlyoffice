@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2019
+ * (c) Copyright Ascensio System SIA 2010-2024
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
+ * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -37,14 +37,13 @@ const constants = require('./constants');
 const buildDate = '6/29/2016';
 const oBuildDate = new Date(buildDate);
 
-exports.readLicense = function*() {
+exports.readLicense = async function () {
 	const c_LR = constants.LICENSE_RESULT;
 	var now = new Date();
 	var startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));//first day of current month
 	return [{
 		count: 1,
 		type: c_LR.Success,
-		light: false,
 		packageType: constants.PACKAGE_TYPE_OS,
 		mode: constants.LICENSE_MODE.None,
 		branding: false,
@@ -56,7 +55,6 @@ exports.readLicense = function*() {
 		usersViewCount: 0,
 		usersExpire: constants.LICENSE_EXPIRE_USERS_ONE_DAY,
 		hasLicense: false,
-		plugins: false,
 		buildDate: oBuildDate,
 		startDate: startDate,
 		endDate: null,

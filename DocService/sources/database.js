@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2019
+ * (c) Copyright Ascensio System SIA 2010-2024
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
+ * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -47,11 +47,10 @@ exports.insert = function (_collectionName, _newElement) {
 		logger.error ("Error _db");
 		return;
 	}
-	
-	// Открываем базу данных
+
 	_db.open (function (err, db) {
 		if (!err) {
-			// Открываем коллекцию. Если её не существует, она будет создана
+			// open collection. If it doesn't exist, it will be created
 			db.collection(_collectionName, function(err, collection) {
 				if (!err) {
 					collection.insert (_newElement);
@@ -74,14 +73,13 @@ exports.remove = function (_collectionName, _removeElements) {
 		return;
 	}
 	
-	// Открываем базу данных
+	// Opening the database
 	_db.open (function (err, db) {
 		if (!err) {
-			// Открываем коллекцию. Если её не существует, она будет создана
+			// open collection. If it doesn't exist, it will be created
 			db.collection(_collectionName, function(err, collection) {
 				if (!err) {
-					collection.remove (_removeElements, function(err, collection) { 
-						// Все элементы удалены
+					collection.remove (_removeElements, function(err, collection) {
 						logger.info ("All elements remove");
 					});
 				} else {
@@ -105,14 +103,14 @@ exports.load = function (_collectionName, callbackFunction) {
 	
 	var result = [];
 	
-	// Открываем базу данных
+	// opening database
 	_db.open (function (err, db) {
-		// Открываем коллекцию. Если её не существует, она будет создана
+		// open collection. If it doesn't exist, it will be created
 		db.collection(_collectionName, function(err, collection) {
-			// Получаем все элементы коллекции с помощью find()
+			// Get all elements of a collection with find()
 			collection.find(function(err, cursor) {
 				cursor.each(function(err, item) {
-					// Null обозначает последний элемент
+					// Null denotes the last element
 					if (item != null) {
 						if (!result.hasOwnProperty (item.docid))
 							result[item.docid] = [item];

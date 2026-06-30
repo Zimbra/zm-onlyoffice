@@ -18,8 +18,8 @@
 -- Create schema onlyoffice
 --
 
-CREATE DATABASE IF NOT EXISTS onlyoffice DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci;
-USE onlyoffice;
+-- CREATE DATABASE IF NOT EXISTS onlyoffice DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci;
+-- USE onlyoffice;
 
 --
 -- Definition of table `doc_changes`
@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS `doc_changes` (
 
 /*!40000 ALTER TABLE `doc_changes` DISABLE KEYS */;
 /*!40000 ALTER TABLE `doc_changes` ENABLE KEYS */;
+
 
 --
 -- Definition of table `task_result`

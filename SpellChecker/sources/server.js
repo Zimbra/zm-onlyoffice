@@ -1,5 +1,5 @@
-﻿/*
- * (c) Copyright Ascensio System SIA 2010-2019
+/*
+ * (c) Copyright Ascensio System SIA 2010-2024
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
+ * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -57,7 +57,7 @@ function endCheckHealth (msg) {
 	statusCheckHealth = true;
 }
 
-const workersCount = 1;	// ToDo Пока только 1 процесс будем задействовать. Но в будующем стоит рассмотреть несколько.
+const workersCount = 1;	// ToDo So far, we will use only 1 process. But in the future it is worth considering a few.
 if (cluster.isMaster) {
 	logger.warn('start cluster with %s workers', workersCount);
 	cluster.on('listening', function(worker) {
@@ -102,10 +102,9 @@ if (cluster.isMaster) {
 		server = http.createServer(app);
 	}
 
-	// Если захочется использовать 'development' и 'production',
-	// то с помощью app.settings.env (https://github.com/strongloop/express/issues/936)
-	// Если нужна обработка ошибок, то теперь она такая https://github.com/expressjs/errorhandler
-	spellCheck.install(server, function(){
+		// If you want to use 'development' and 'production',
+		// then with app.settings.env (https://github.com/strongloop/express/issues/936)
+		// If error handling is needed, now it's like this https://github.com/expressjs/errorhandler	spellCheck.install(server, function(){
 		server.listen(config.get('server.port'), function(){
 			logger.warn("Express server listening on port %d in %s mode", config.get('server.port'), app.settings.env);
 		});
