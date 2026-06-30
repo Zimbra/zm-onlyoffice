@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2024
+ * (c) Copyright Ascensio System SIA 2010-2019
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -12,7 +12,7 @@
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
  * details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
  *
- * You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
+ * You can contact Ascensio System SIA at 20A-12 Ernesta Birznieka-Upisha
  * street, Riga, Latvia, EU, LV-1050.
  *
  * The  interactive user interfaces in modified source and object code versions
@@ -49,9 +49,6 @@ exports.CHANGES_NAME = 'changes';
 exports.VIEWER_ONLY = /^(?:(pdf|djvu|xps|oxps))$/;
 exports.DEFAULT_DOC_ID = 'docId';
 exports.DEFAULT_USER_ID = 'userId';
-exports.ALLOWED_PROTO = /^https?$/i;
-exports.SHARD_KEY_WOPI_NAME = 'WOPISrc';
-exports.SHARD_KEY_API_NAME = 'shardkey';
 
 exports.RIGHTS = {
   None    : 0,
@@ -83,11 +80,9 @@ exports.LICENSE_RESULT = {
   ConnectionsLiveOS: 12,
   ConnectionsLive: 13,
   UsersViewCount: 14,
-  UsersViewCountOS: 15,
-  NotBefore: 16
+  UsersViewCountOS: 15
 };
 
-exports.LICENSE_USERS = 3;
 exports.LICENSE_CONNECTIONS = 99999;
 exports.LICENSE_EXPIRE_USERS_ONE_DAY = 24 * 60 * 60; // day in seconds
 
@@ -114,7 +109,6 @@ exports.AVS_OFFICESTUDIO_FILE_DOCUMENT_HTML_IN_CONTAINER = exports.AVS_OFFICESTU
 exports.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOCX_PACKAGE = exports.AVS_OFFICESTUDIO_FILE_DOCUMENT + 0x0014;
 exports.AVS_OFFICESTUDIO_FILE_DOCUMENT_OFORM = exports.AVS_OFFICESTUDIO_FILE_DOCUMENT + 0x0015;
 exports.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOCXF = exports.AVS_OFFICESTUDIO_FILE_DOCUMENT + 0x0016;
-exports.AVS_OFFICESTUDIO_FILE_DOCUMENT_OFORM_PDF = exports.AVS_OFFICESTUDIO_FILE_DOCUMENT + 0x0017;
 
 exports.AVS_OFFICESTUDIO_FILE_PRESENTATION = 0x0080;
 exports.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTX = exports.AVS_OFFICESTUDIO_FILE_PRESENTATION + 0x0001;
@@ -128,7 +122,6 @@ exports.AVS_OFFICESTUDIO_FILE_PRESENTATION_POTM = exports.AVS_OFFICESTUDIO_FILE_
 exports.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODP_FLAT = exports.AVS_OFFICESTUDIO_FILE_PRESENTATION + 0x0009;
 exports.AVS_OFFICESTUDIO_FILE_PRESENTATION_OTP = exports.AVS_OFFICESTUDIO_FILE_PRESENTATION + 0x000a;
 exports.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTX_PACKAGE = exports.AVS_OFFICESTUDIO_FILE_PRESENTATION + 0x000b;
-exports.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODG  = exports.AVS_OFFICESTUDIO_FILE_PRESENTATION + 0x000c;
 
 exports.AVS_OFFICESTUDIO_FILE_SPREADSHEET = 0x0100;
 exports.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSX = exports.AVS_OFFICESTUDIO_FILE_SPREADSHEET + 0x0001;
@@ -154,7 +147,6 @@ exports.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_HTMLR = exports.AVS_OFFICESTUDIO_FIL
 exports.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_HTMLR_MENU = exports.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM + 0x0007;
 exports.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_HTMLR_CANVAS = exports.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM + 0x0008;
 exports.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDFA = exports.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM + 0x0009;
-
 exports.AVS_OFFICESTUDIO_FILE_IMAGE = 0x0400;
 exports.AVS_OFFICESTUDIO_FILE_IMAGE_JPG = exports.AVS_OFFICESTUDIO_FILE_IMAGE + 0x0001;
 exports.AVS_OFFICESTUDIO_FILE_IMAGE_TIFF = exports.AVS_OFFICESTUDIO_FILE_IMAGE + 0x0002;
@@ -169,7 +161,6 @@ exports.AVS_OFFICESTUDIO_FILE_IMAGE_PCX = exports.AVS_OFFICESTUDIO_FILE_IMAGE + 
 exports.AVS_OFFICESTUDIO_FILE_IMAGE_RAS = exports.AVS_OFFICESTUDIO_FILE_IMAGE + 0x000b;
 exports.AVS_OFFICESTUDIO_FILE_IMAGE_PSD = exports.AVS_OFFICESTUDIO_FILE_IMAGE + 0x000c;
 exports.AVS_OFFICESTUDIO_FILE_IMAGE_ICO = exports.AVS_OFFICESTUDIO_FILE_IMAGE + 0x000d;
-
 exports.AVS_OFFICESTUDIO_FILE_OTHER = 0x0800;
 exports.AVS_OFFICESTUDIO_FILE_OTHER_EXTRACT_IMAGE = exports.AVS_OFFICESTUDIO_FILE_OTHER + 0x0001;
 exports.AVS_OFFICESTUDIO_FILE_OTHER_MS_OFFCRYPTO = exports.AVS_OFFICESTUDIO_FILE_OTHER + 0x0002;
@@ -181,27 +172,15 @@ exports.AVS_OFFICESTUDIO_FILE_OTHER_OOXML = exports.AVS_OFFICESTUDIO_FILE_OTHER 
 exports.AVS_OFFICESTUDIO_FILE_OTHER_JSON = exports.AVS_OFFICESTUDIO_FILE_OTHER + 0x0008; // Для mail-merge
 exports.AVS_OFFICESTUDIO_FILE_OTHER_ODF = exports.AVS_OFFICESTUDIO_FILE_OTHER + 0x000a;
 exports.AVS_OFFICESTUDIO_FILE_OTHER_MS_MITCRYPTO = exports.AVS_OFFICESTUDIO_FILE_OTHER + 0x000b;
-exports.AVS_OFFICESTUDIO_FILE_OTHER_MS_VBAPROJECT = exports.AVS_OFFICESTUDIO_FILE_OTHER + 0x000c;
-exports.AVS_OFFICESTUDIO_FILE_OTHER_PACKAGE_IN_OLE = exports.AVS_OFFICESTUDIO_FILE_OTHER + 0x000d;
 
 exports.AVS_OFFICESTUDIO_FILE_TEAMLAB = 0x1000;
 exports.AVS_OFFICESTUDIO_FILE_TEAMLAB_DOCY = exports.AVS_OFFICESTUDIO_FILE_TEAMLAB + 0x0001;
 exports.AVS_OFFICESTUDIO_FILE_TEAMLAB_XLSY = exports.AVS_OFFICESTUDIO_FILE_TEAMLAB + 0x0002;
 exports.AVS_OFFICESTUDIO_FILE_TEAMLAB_PPTY = exports.AVS_OFFICESTUDIO_FILE_TEAMLAB + 0x0003;
-
 exports.AVS_OFFICESTUDIO_FILE_CANVAS = 0x2000;
 exports.AVS_OFFICESTUDIO_FILE_CANVAS_WORD = exports.AVS_OFFICESTUDIO_FILE_CANVAS + 0x0001;
 exports.AVS_OFFICESTUDIO_FILE_CANVAS_SPREADSHEET = exports.AVS_OFFICESTUDIO_FILE_CANVAS + 0x0002;
 exports.AVS_OFFICESTUDIO_FILE_CANVAS_PRESENTATION = exports.AVS_OFFICESTUDIO_FILE_CANVAS + 0x0003;
-exports.AVS_OFFICESTUDIO_FILE_CANVAS_PDF = exports.AVS_OFFICESTUDIO_FILE_CANVAS + 0x0004;
-
-exports.AVS_OFFICESTUDIO_FILE_DRAW  = 0x4000;
-exports.AVS_OFFICESTUDIO_FILE_DRAW_VSDX = exports.AVS_OFFICESTUDIO_FILE_DRAW + 0x0001;
-exports.AVS_OFFICESTUDIO_FILE_DRAW_VSSX = exports.AVS_OFFICESTUDIO_FILE_DRAW + 0x0002;
-exports.AVS_OFFICESTUDIO_FILE_DRAW_VSTX = exports.AVS_OFFICESTUDIO_FILE_DRAW + 0x0003;
-exports.AVS_OFFICESTUDIO_FILE_DRAW_VSDM = exports.AVS_OFFICESTUDIO_FILE_DRAW + 0x0004;
-exports.AVS_OFFICESTUDIO_FILE_DRAW_VSSM = exports.AVS_OFFICESTUDIO_FILE_DRAW + 0x0005;
-exports.AVS_OFFICESTUDIO_FILE_DRAW_VSTM = exports.AVS_OFFICESTUDIO_FILE_DRAW + 0x0006;
 
 exports.NO_ERROR = 0;
 exports.UNKNOWN = -1;
@@ -231,8 +210,6 @@ exports.CONVERT_DRM = -90;
 exports.CONVERT_PASSWORD = -91;
 exports.CONVERT_ICU = -92;
 exports.CONVERT_LIMITS = -93;
-exports.CONVERT_TEMPORARY = -94;
-exports.CONVERT_DETECT = -95;
 exports.CONVERT_DEAD_LETTER = -99;
 exports.UPLOAD = -100;
 exports.UPLOAD_CONTENT_LENGTH = -101;
@@ -263,9 +240,36 @@ exports.PACKAGE_TYPE_OS = 0;
 exports.PACKAGE_TYPE_I = 1;
 exports.PACKAGE_TYPE_D = 2;
 
+exports.REDIS_KEY_PUBSUB = 'pubsub';
+exports.REDIS_KEY_SAVE_LOCK = 'savelock:';
+exports.REDIS_KEY_PRESENCE_HASH = 'presence:hash:';
+exports.REDIS_KEY_PRESENCE_SET = 'presence:set:';
+exports.REDIS_KEY_PRESENCE_UNIQUE_USERS = 'presence:unique:users';
+exports.REDIS_KEY_PRESENCE_UNIQUE_USERS_HASH = 'presence:unique:users:hash';
+exports.REDIS_KEY_PRESENCE_MONTH_UNIQUE_USERS_HASH = 'presence:unique:users:month';
+exports.REDIS_KEY_PRESENCE_UNIQUE_USERS_VIEW = 'presence:unique:usersview';
+exports.REDIS_KEY_PRESENCE_UNIQUE_USERS_VIEW_HASH = 'presence:unique:usersview:hash';
+exports.REDIS_KEY_PRESENCE_MONTH_UNIQUE_USERS_VIEW_HASH = 'presence:unique:usersview:month';
+exports.REDIS_KEY_LOCKS = 'locks:';
+exports.REDIS_KEY_LOCK_DOCUMENT = 'lockdocument:';
+exports.REDIS_KEY_MESSAGE = 'message:';
+exports.REDIS_KEY_DOCUMENTS = 'documents';
+exports.REDIS_KEY_LAST_SAVE = 'lastsave:';
+exports.REDIS_KEY_FORCE_SAVE = 'forcesave:';
+exports.REDIS_KEY_FORCE_SAVE_TIMER = 'forcesavetimer';
+exports.REDIS_KEY_FORCE_SAVE_TIMER_LOCK = 'forcesavetimerlock:';
+exports.REDIS_KEY_SAVED = 'saved:';
 exports.REDIS_KEY_SHUTDOWN = 'shutdown';
+exports.REDIS_KEY_COLLECT_LOST = 'collectlost';
 exports.REDIS_KEY_LICENSE = 'license';
 exports.REDIS_KEY_LICENSE_T = 'licenseT';
+exports.REDIS_KEY_EDITOR_CONNECTIONS = 'editorconnections';
+exports.REDIS_KEY_SHARD_CONNECTIONS_EDIT_ZSET = 'shardconnections:edit:zset';
+exports.REDIS_KEY_SHARD_CONNECTIONS_EDIT_HASH = 'shardconnections:edit:hash';
+exports.REDIS_KEY_SHARD_CONNECTIONS_LIVE_VIEW_ZSET = 'shardconnections:liveview:zset';
+exports.REDIS_KEY_SHARD_CONNECTIONS_LIVE_VIEW_HASH = 'shardconnections:liveview:hash';
+exports.REDIS_KEY_SHARD_CONNECTIONS_VIEW_ZSET = 'shardconnections:view:zset';
+exports.REDIS_KEY_SHARD_CONNECTIONS_VIEW_HASH = 'shardconnections:view:hash';
 
 exports.SHUTDOWN_CODE = 4001;
 exports.SHUTDOWN_REASON = 'server shutdown';
@@ -291,43 +295,10 @@ exports.RESTORE = 'no cache';
 exports.CONTENT_DISPOSITION_INLINE = 'inline';
 exports.CONTENT_DISPOSITION_ATTACHMENT = 'attachment';
 
-exports.CONN_CLOSED = "closed";
+exports.CONN_CLOSED = 3;
 
 exports.FILE_STATUS_OK = 'ok';
 exports.FILE_STATUS_UPDATE_VERSION = 'updateversion';
 
 exports.ACTIVEMQ_QUEUE_PREFIX = 'queue://';
 exports.ACTIVEMQ_TOPIC_PREFIX = 'topic://';
-
-exports.TEMPLATES_DEFAULT_LOCALE = 'en-US';
-exports.TEMPLATES_FOLDER_LOCALE_COLLISON_MAP = {
-  'en': 'en-US',
-  'pt': 'pt-BR',
-  'zh': 'zh-CH',
-  'pt-PT': 'pt-PT',
-  'zh-TW': 'zh-TW'
-};
-exports.TABLE_RESULT_SCHEMA = [
-  'tenant',
-  'id',
-  'status',
-  'status_info',
-  'created_at',
-  'last_open_date',
-  'user_index',
-  'change_id',
-  'callback',
-  'baseurl',
-  'password',
-  'additional'
-];
-exports.TABLE_CHANGES_SCHEMA = [
-  'tenant',
-  'id',
-  'change_id',
-  'user_id',
-  'user_id_original',
-  'user_name',
-  'change_data',
-  'change_date',
-];
