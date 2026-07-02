@@ -52,21 +52,13 @@ usage() {
 
 generate_random()
 {
-  length=8
-  digits=({2..9})
-  lower=({a..k} {m..n} {p..z})
-  upper=({A..N} {P..Z})
-  CharArray=(${digits[*]} ${lower[*]} ${upper[*]})
-  ArrayLength=${#CharArray[*]}
-  password=""
-  while [ $length -gt 0 ]
-  do
-    index=$(($RANDOM%$ArrayLength))
-    char=${CharArray[$index]}
-    password=${password}${char}
-    ((length--))
-  done
-  echo "$password"
+  # Generate 32 cryptographically secure random bytes (256-bit entropy)
+  # Encode to base64
+  # Remove newline
+  # Convert to URL-safe base64 (replace + with -, / with _)
+  secret=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | tr '+/' '-_')
+
+  echo "$secret"
 }
 
 update_db_config()
@@ -219,7 +211,14 @@ case "$type" in
       IFS=':'
       read -ra arr <<< "$jwtsecret"
       document_editing_JWT_secret=$(echo "${arr[1]}" | xargs)
-      update_jwt_config "$document_editing_JWT_secret"
+
+      # Check if length is exactly 8
+      if [ "${#document_editing_JWT_secret}" -eq 8 ]; then
+        echo "JWT Secret length is 8. Resetting secret..."
+        set_jwt_secret
+      else
+        update_jwt_config "$document_editing_JWT_secret"
+      fi
     fi
 
     update_certificate_path
