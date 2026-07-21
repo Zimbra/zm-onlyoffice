@@ -330,17 +330,6 @@ jobs:
     resource_class: small
     <<: *build_job_steps
 
-  build_c7:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-7
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_job_steps
-
   deploy_s3:
     working_directory: ~/zm-onlyoffice
     shell: /bin/bash -eo pipefail
@@ -408,17 +397,6 @@ jobs:
     shell: /bin/bash -eo pipefail
     docker:
       - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-8
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_develop_rpm
-
-  develop_c7:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-7
         auth:
           username: $DOCKER_USER
           password: $DOCKER_PASS
@@ -515,16 +493,6 @@ workflows:
             branches:
               only: master
 
-      - develop_c7:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - build-info
-          filters:
-            branches:
-              only: master
-
       - publish_packages:
           requires:
             - develop_u24
@@ -533,7 +501,6 @@ workflows:
             - develop_u18
             - develop_c9
             - develop_c8
-            - develop_c7
           context:
             - docker-dev-registry
             - nexus-dev-artifactory
@@ -621,16 +588,6 @@ workflows:
             branches:
               ignore: master
 
-      - build_c7:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - oracle
-          filters:
-            branches:
-              ignore: master
-
       - deploy_s3_hold:
           type: approval
           requires:
@@ -640,7 +597,6 @@ workflows:
             - build_u18
             - build_c9
             - build_c8
-            - build_c7
           filters:
             branches:
               ignore: master
