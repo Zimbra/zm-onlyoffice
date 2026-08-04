@@ -78,6 +78,17 @@ jobs:
       resource_class: small
       <<: *checkout_job_steps
 
+   build_u24:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      docker:
+         - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-24.04
+           auth:
+            username: $DOCKER_USER
+            password: $DOCKER_PASS
+      resource_class: small
+      <<: *build_job_steps
+
    build_u22:
       working_directory: ~/zm-onlyoffice
       shell: /bin/bash -eo pipefail
@@ -158,6 +169,14 @@ workflows:
             filters:
               branches:
                 only: zimbra/master
+         - build_u24:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                only: zimbra/master
          - build_u22:
             requires:
                - checkout
@@ -203,6 +222,7 @@ workflows:
                - docker-dev-registry
                - nexus-dev-artifactory
             requires:
+               - build_u24
                - build_u22
                - build_u20
                - build_u18
@@ -227,6 +247,14 @@ workflows:
              - build
             context:
              - docker-dev-registry
+            filters:
+              branches:
+                ignore: zimbra/master
+         - build_u24:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
             filters:
               branches:
                 ignore: zimbra/master
@@ -267,6 +295,7 @@ workflows:
          - deploy_s3_hold:
             type: approval
             requires:
+               - build_u24
                - build_u22
                - build_u20
                - build_u18
