@@ -124,14 +124,6 @@ jobs:
       resource_class: small
       <<: *build_job_steps
 
-   build_c7:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      docker:
-         - image: zimbra/zm-base-os:devcore-centos-7
-      resource_class: small
-      <<: *build_job_steps
-
    deploy_s3:
       working_directory: ~/zm-onlyoffice
       shell: /bin/bash -eo pipefail
@@ -206,14 +198,6 @@ workflows:
             filters:
               branches:
                 only: zimbra/master
-         - build_c7:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                only: zimbra/master
          - publish_packages:
             context:
                - docker-dev-registry
@@ -224,7 +208,6 @@ workflows:
                - build_u18
                - build_c9
                - build_c8
-               - build_c7
             filters:
               branches:
                 only: zimbra/master
@@ -281,13 +264,6 @@ workflows:
             filters:
               branches:
                 ignore: zimbra/master
-         - build_c7:
-            requires:
-               - checkout
-            filters:
-              branches:
-                ignore: zimbra/master
-
          - deploy_s3_hold:
             type: approval
             requires:
@@ -296,11 +272,9 @@ workflows:
                - build_u18
                - build_c9
                - build_c8
-               - build_c7
             filters:
               branches:
                 ignore: zimbra/master
-
          - deploy_s3:
             context:
                - oracle
