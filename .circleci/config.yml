@@ -3,609 +3,307 @@ version: 2.1
 ############################################################################
 
 references:
-  # ---------------------------------------------------------------------------
-  # checkout: git checkout + npm install + grunt build (needs Node)
-  # ---------------------------------------------------------------------------
-  checkout_job_steps: &checkout_job_steps
-    steps:
-      - checkout
+   checkout_job_steps: &checkout_job_steps
+      steps:
+         - checkout
+         - run: 
+            name: Checking out dependencies
+            command: |
+               git clone -b develop --single-branch https://github.com/Zimbra/zm-pkg-tool.git ~/zm-pkg-tool
+               git clone -b master --single-branch https://$GITHUB_ACCESS_TOKEN@github.com/Zimbra/zm-nexus.git ~/zm-nexus
+               echo "BUILD_NO=$CIRCLE_BUILD_NUM" > config.build
+         - persist_to_workspace:
+            root: ..
+            paths:
+               - zm-onlyoffice
+               - zm-pkg-tool
+               - zm-nexus
 
-      - run:
-          name: Checking out dependencies
-          command: |
-            git clone -b develop --single-branch https://github.com/Zimbra/zm-pkg-tool.git ~/zm-pkg-tool
-            git clone -b master --single-branch https://$GITHUB_ACCESS_TOKEN@github.com/Zimbra/zm-nexus.git ~/zm-nexus
+   build_job_steps: &build_job_steps
+      steps:
+         - attach_workspace:
+            at: ..
+         - run:
+            name: Creating build
+            command: make -f Makefile.build
+            no_output_timeout: 30m
+         - store_artifacts:
+            path: build/dist
+         - persist_to_workspace:
+            root: ..
+            paths: zm-onlyoffice/build/dist/*
 
-      - run:
-          name: Install Node.js 18
-          command: |
-            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo bash -
-            sudo apt-get install -y nodejs
+   deploy_s3_job_steps: &deploy_s3_job_steps
+      docker:
+         - image: 'cimg/python:3.10'
+      resource_class: small
+      steps:
+         - attach_workspace:
+            at: ..
+         - run:
+             name: Create a zip file for artifacts and upload them to the OCI bucket
+             command: |
+               cd build/dist/
+               zip -r $CIRCLE_PROJECT_REPONAME.zip .
+               ZIP_FILE_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/$CIRCLE_BRANCH-$CIRCLE_BUILD_NUM/archives/$CIRCLE_PROJECT_REPONAME.zip"
+               curl -X PUT "$OCI_PAR_URL$ZIP_FILE_PATH" -T $CIRCLE_PROJECT_REPONAME.zip
+               echo "artifacts uploaded to $ZIP_FILE_PATH"
 
-      - run:
-          name: npm install + grunt build
-          command: |
-            npm install
-            PRODUCT_VERSION=0.0.0 BUILD_NUMBER=0 \
-              PUBLISHER_NAME="Ascensio System SIA" \
-              PUBLISHER_URL="https://www.onlyoffice.com/" \
-              npx grunt --no-color -v
-          no_output_timeout: 30m
+   publish_packages_job_steps: &publish_packages_job_steps
+      steps:
+         - attach_workspace:
+            at: ..
+         - run:
+            name: Publish package artifacts to Nexus
+            command: |
+              sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl
+              bash ../zm-nexus/scripts/publish-packages-to-nexus.sh "build/dist"
 
-      - persist_to_workspace:
-          root: ..
-          paths:
-            - zm-onlyoffice
-            - zm-pkg-tool
-            - zm-nexus
-
-  # ---------------------------------------------------------------------------
-  # Makefile sees Gruntfile.js.out exists → skips grunt → runs packaging targets.
-  # ---------------------------------------------------------------------------
-  build_job_steps: &build_job_steps
-    steps:
-      - attach_workspace:
-          at: ..
-
-      - run:
-          name: Creating build
-          command: |
-            touch Gruntfile.js.out
-
-            COMMON_DEFINES="build/server/Common/sources/commondefines.js"
-            LICENSE_JS="build/server/Common/sources/license.js"
-
-            if [ -f "${COMMON_DEFINES}" ]; then
-              sed -i "s|\(const buildVersion = \).*|\1'0.0.0';|" "${COMMON_DEFINES}"
-              sed -i "s|\(const buildNumber = \).*|\10;|" "${COMMON_DEFINES}"
-            fi
-            if [ -f "${LICENSE_JS}" ]; then
-              sed -i "s|\(const buildDate = \).*|\1'$(date +%F)';|" "${LICENSE_JS}"
-            fi
-
-            STAGE_DIR="build/stage/zimbra-onlyoffice/opt/zimbra/onlyoffice"
-            mkdir -p "${STAGE_DIR}"
-            # Copy build/server/ but exclude node_modules — they contain
-            rsync -a --exclude='node_modules' build/server/. "${STAGE_DIR}/"
-
-            ../zm-pkg-tool/pkg-build.pl \
-              --out-type=binary \
-              --out-base-dir=build \
-              --pkg-version=0.0.0 \
-              --pkg-release=1 \
-              --pkg-name=zimbra-onlyoffice \
-              --pkg-summary="Zimbra OnlyOffice Document Server" \
-              --pkg-installs="/opt/zimbra/onlyoffice" \
-              --cfg-dir=pkg-spec
-          no_output_timeout: 30m
-
-      - store_artifacts:
-          path: build/dist
-
-      - persist_to_workspace:
-          root: ..
-          paths: zm-onlyoffice/build/dist/*
-
-  # ---------------------------------------------------------------------------
-  # develop build steps — deb platforms (Ubuntu).
-  # Version: <MAJOR>.<MINOR>.<MICRO>.<git_commit_timestamp>
-  # Release: 1
-  # Base version components come from BUILD_RELEASE_NO (build-info context).
-  # ---------------------------------------------------------------------------
-  build_develop_deb: &build_develop_deb
-    steps:
-      - attach_workspace:
-          at: ..
-
-      - run:
-          name: Creating develop package (deb)
-          command: |
-            # Strip trailing underscore and _GA suffix from BUILD_RELEASE_NO
-            BUILD_RELEASE_NUMBER="${BUILD_RELEASE_NO%_}"
-            BUILD_RELEASE_NUMBER="${BUILD_RELEASE_NUMBER%_GA}"
-            MAJOR_VERSION=$(echo "$BUILD_RELEASE_NUMBER" | cut -d'.' -f1)
-            MINOR_VERSION=$(echo "$BUILD_RELEASE_NUMBER" | cut -d'.' -f2)
-            MICRO_TAG=$(echo "$BUILD_RELEASE_NUMBER" | cut -d'.' -f3)
-
-            # Unix timestamp of the latest git commit
-            GIT_COMMIT_TS=$(git log -1 --format="%ct")
-
-            PKG_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${MICRO_TAG}.${GIT_COMMIT_TS}"
-            PKG_RELEASE="1"
-
-            echo "PKG_VERSION=${PKG_VERSION}  PKG_RELEASE=${PKG_RELEASE}"
-
-            touch Gruntfile.js.out
-
-            COMMON_DEFINES="build/server/Common/sources/commondefines.js"
-            LICENSE_JS="build/server/Common/sources/license.js"
-
-            if [ -f "${COMMON_DEFINES}" ]; then
-              sed -i "s|\(const buildVersion = \).*|\1'${PKG_VERSION}';|" "${COMMON_DEFINES}"
-              sed -i "s|\(const buildNumber = \).*|\1${CIRCLE_BUILD_NUM};|" "${COMMON_DEFINES}"
-            fi
-            if [ -f "${LICENSE_JS}" ]; then
-              sed -i "s|\(const buildDate = \).*|\1'$(date +%F)';|" "${LICENSE_JS}"
-            fi
-
-            STAGE_DIR="build/stage/zimbra-onlyoffice/opt/zimbra/onlyoffice"
-            mkdir -p "${STAGE_DIR}"
-            # Copy build/server/ but exclude node_modules — they contain
-            rsync -a --exclude='node_modules' build/server/. "${STAGE_DIR}/"
-
-            ../zm-pkg-tool/pkg-build.pl \
-              --out-type=binary \
-              --out-base-dir=build \
-              --pkg-version="${PKG_VERSION}" \
-              --pkg-release="${PKG_RELEASE}" \
-              --pkg-name=zimbra-onlyoffice \
-              --pkg-summary="Zimbra OnlyOffice Document Server" \
-              --pkg-installs="/opt/zimbra/onlyoffice" \
-              --cfg-dir=pkg-spec
-          no_output_timeout: 30m
-
-      - store_artifacts:
-          path: build/dist
-
-      - persist_to_workspace:
-          root: ..
-          paths: zm-onlyoffice/build/dist/*
-
-  # ---------------------------------------------------------------------------
-  # develop build steps — rpm platforms (CentOS/RHEL).
-  # Same versioning as deb: <MAJOR>.<MINOR>.<MICRO>.<git_commit_timestamp>-1
-  # ---------------------------------------------------------------------------
-  build_develop_rpm: &build_develop_rpm
-    steps:
-      - attach_workspace:
-          at: ..
-
-      - run:
-          name: Creating develop package (rpm)
-          command: |
-            # Strip trailing underscore and _GA suffix from BUILD_RELEASE_NO
-            BUILD_RELEASE_NUMBER="${BUILD_RELEASE_NO%_}"
-            BUILD_RELEASE_NUMBER="${BUILD_RELEASE_NUMBER%_GA}"
-            MAJOR_VERSION=$(echo "$BUILD_RELEASE_NUMBER" | cut -d'.' -f1)
-            MINOR_VERSION=$(echo "$BUILD_RELEASE_NUMBER" | cut -d'.' -f2)
-            MICRO_TAG=$(echo "$BUILD_RELEASE_NUMBER" | cut -d'.' -f3)
-
-            # 4th component = Unix timestamp of the latest git commit
-            GIT_COMMIT_TS=$(git log -1 --format="%ct")
-
-            PKG_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${MICRO_TAG}.${GIT_COMMIT_TS}"
-            PKG_RELEASE="1"
-
-            echo "PKG_VERSION=${PKG_VERSION}  PKG_RELEASE=${PKG_RELEASE}"
-
-            touch Gruntfile.js.out
-
-            COMMON_DEFINES="build/server/Common/sources/commondefines.js"
-            LICENSE_JS="build/server/Common/sources/license.js"
-
-            if [ -f "${COMMON_DEFINES}" ]; then
-              sed -i "s|\(const buildVersion = \).*|\1'${PKG_VERSION}';|" "${COMMON_DEFINES}"
-              sed -i "s|\(const buildNumber = \).*|\1${CIRCLE_BUILD_NUM};|" "${COMMON_DEFINES}"
-            fi
-            if [ -f "${LICENSE_JS}" ]; then
-              sed -i "s|\(const buildDate = \).*|\1'$(date +%F)';|" "${LICENSE_JS}"
-            fi
-
-            STAGE_DIR="build/stage/zimbra-onlyoffice/opt/zimbra/onlyoffice"
-            mkdir -p "${STAGE_DIR}"
-            # Copy build/server/ but exclude node_modules — they contain
-            # cross-arch native .node binaries that dh_strip/objcopy can't
-            # process on the build host, causing "Unable to recognise format" errors.
-            rsync -a --exclude='node_modules' build/server/. "${STAGE_DIR}/"
-
-            ../zm-pkg-tool/pkg-build.pl \
-              --out-type=binary \
-              --out-base-dir=build \
-              --pkg-version="${PKG_VERSION}" \
-              --pkg-release="${PKG_RELEASE}" \
-              --pkg-name=zimbra-onlyoffice \
-              --pkg-summary="Zimbra OnlyOffice Document Server" \
-              --pkg-installs="/opt/zimbra/onlyoffice" \
-              --cfg-dir=pkg-spec
-          no_output_timeout: 30m
-
-      - store_artifacts:
-          path: build/dist
-
-      - persist_to_workspace:
-          root: ..
-          paths: zm-onlyoffice/build/dist/*
-
-  # ---------------------------------------------------------------------------
-  # OCI upload (non-master workflow, approval-gated)
-  # ---------------------------------------------------------------------------
-  deploy_s3_job_steps: &deploy_s3_job_steps
-    docker:
-      - image: 'cimg/python:3.10'
-    resource_class: small
-    steps:
-      - attach_workspace:
-          at: ..
-      - run:
-          name: Create a zip file for artifacts and upload them to the OCI bucket
-          command: |
-            cd build/dist/
-            zip -r $CIRCLE_PROJECT_REPONAME.zip .
-            ZIP_FILE_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/$CIRCLE_BRANCH-$CIRCLE_BUILD_NUM/archives/$CIRCLE_PROJECT_REPONAME.zip"
-            curl -X PUT "$OCI_PAR_URL$ZIP_FILE_PATH" -T $CIRCLE_PROJECT_REPONAME.zip
-            echo "artifacts uploaded to $ZIP_FILE_PATH"
-
-  # ---------------------------------------------------------------------------
-  # Nexus publish (master_branch-workflow only)
-  # ---------------------------------------------------------------------------
-  publish_packages_job_steps: &publish_packages_job_steps
-    steps:
-      - attach_workspace:
-          at: ..
-      - run:
-          name: Publish package artifacts to Nexus
-          command: |
-            sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl
-            bash ../zm-nexus/scripts/publish-packages-to-nexus.sh "build/dist"
+   std_filters: &std_filters
+      filters:
+         branches:
+            only:
+               - master
+               - develop
+               - zimbra/master
 
 ############################################################################
 
 jobs:
-  checkout:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
+   checkout:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      docker:
+         - image: zimbra/zm-base-os:core-ubuntu
+      resource_class: small
+      <<: *checkout_job_steps
+
+   build_u22:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      docker:
+         - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
+           auth:
+            username: $DOCKER_USER
+            password: $DOCKER_PASS
+      resource_class: small
+      <<: *build_job_steps
+
+   build_u20:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      docker:
+         - image: zimbra/zm-base-os:devcore-ubuntu-20.04
+      resource_class: small
+      <<: *build_job_steps
+
+   build_u18:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      docker:
+         - image: zimbra/zm-base-os:devcore-ubuntu-18.04
+      resource_class: small
+      <<: *build_job_steps
+
+   build_c9:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      docker:
+         - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-9
+           auth:
+            username: $DOCKER_USER
+            password: $DOCKER_PASS
+      resource_class: small
+      <<: *build_job_steps
+
+   build_c8:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      docker:
+         - image: zimbra/zm-base-os:devcore-centos-8
+      resource_class: small
+      <<: *build_job_steps
+
+   build_c7:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      docker:
+         - image: zimbra/zm-base-os:devcore-centos-7
+      resource_class: small
+      <<: *build_job_steps
+
+   deploy_s3:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      <<: *deploy_s3_job_steps
+
+   publish_packages:
+      working_directory: ~/zm-onlyoffice
+      shell: /bin/bash -eo pipefail
+      circleci_ip_ranges: true
+      docker:
       - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
         auth:
           username: $DOCKER_USER
           password: $DOCKER_PASS
-    resource_class: small
-    <<: *checkout_job_steps
-
-  # ── non-develop build jobs (used by main workflow, approval-gated) ──────────
-
-  build_u24:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-24.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_job_steps
-
-  build_u22:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_job_steps
-
-  build_u20:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-20.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_job_steps
-
-  build_u18:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-18.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_job_steps
-
-  build_c9:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-9
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_job_steps
-
-  build_c8:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-8
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_job_steps
-
-  deploy_s3:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    <<: *deploy_s3_job_steps
-
-  # ── master-workflow build jobs (master branch -> build_pkgs -> publish-nexus) ────────────
-
-  develop_u24:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-24.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_develop_deb
-
-  develop_u22:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_develop_deb
-
-  develop_u20:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-20.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_develop_deb
-
-  develop_u18:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-18.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_develop_deb
-
-  develop_c9:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-9
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_develop_rpm
-
-  develop_c8:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-8
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *build_develop_rpm
-
-  publish_packages:
-    working_directory: ~/zm-onlyoffice
-    shell: /bin/bash -eo pipefail
-    circleci_ip_ranges: true
-    docker:
-      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
-        auth:
-          username: $DOCKER_USER
-          password: $DOCKER_PASS
-    resource_class: small
-    <<: *publish_packages_job_steps
+      resource_class: small
+      <<: *publish_packages_job_steps
 
 ############################################################################
 
 workflows:
-  version: 2
+   version: 2
 
-  # ---------------------------------------------------------------------------
-  # master_branch-workflow: auto-triggers on every push/merge to master branch.
-  # checkout → parallel OS builds → publish_packages to Nexus, No approvals.
-  # ---------------------------------------------------------------------------
-  develop-workflow:
-    jobs:
-      - checkout:
-          context:
-            - docker-dev-registry
-          filters:
-            branches:
-              only: master
+   # ----------------------------------------------------------------------------------------
+   # only for zimbra/master branch: checkout -> build (all OS) -> publish_packages_to_nexus
+   # no manual approval, no S3 deploy
+   # ----------------------------------------------------------------------------------------
+   zimbra-master-workflow:
+      jobs:
+         - checkout:
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                only: zimbra/master
+         - build_u22:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                only: zimbra/master
+         - build_u20:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                only: zimbra/master
+         - build_u18:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                only: zimbra/master
+         - build_c9:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                only: zimbra/master
+         - build_c8:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                only: zimbra/master
+         - build_c7:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                only: zimbra/master
+         - publish_packages:
+            context:
+               - docker-dev-registry
+               - nexus-dev-artifactory
+            requires:
+               - build_u22
+               - build_u20
+               - build_u18
+               - build_c9
+               - build_c8
+               - build_c7
+            filters:
+              branches:
+                only: zimbra/master
 
-      - develop_u24:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - build-info
-          filters:
-            branches:
-              only: master
+   # ----------------------------------------------------------------------------------
+   # all other branches: approval -> checkout -> build -> deploy_s3
+   # ----------------------------------------------------------------------------------
+   other-branches-workflow:
+      jobs:
+         - build:
+            type: approval
+            filters:
+              branches:
+                ignore: zimbra/master
+         - checkout:
+            requires:
+             - build
+            filters:
+              branches:
+                ignore: zimbra/master
+         - build_u22:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                ignore: zimbra/master
+         - build_u20:
+            requires:
+               - checkout
+            filters:
+              branches:
+                ignore: zimbra/master
+         - build_u18:
+            requires:
+               - checkout
+            filters:
+              branches:
+                ignore: zimbra/master
+         - build_c9:
+            requires:
+               - checkout
+            context:
+               - docker-dev-registry
+            filters:
+              branches:
+                ignore: zimbra/master
+         - build_c8:
+            requires:
+               - checkout
+            filters:
+              branches:
+                ignore: zimbra/master
+         - build_c7:
+            requires:
+               - checkout
+            filters:
+              branches:
+                ignore: zimbra/master
 
-      - develop_u22:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - build-info
-          filters:
-            branches:
-              only: master
+         - deploy_s3_hold:
+            type: approval
+            requires:
+               - build_u22
+               - build_u20
+               - build_u18
+               - build_c9
+               - build_c8
+               - build_c7
+            filters:
+              branches:
+                ignore: zimbra/master
 
-      - develop_u20:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - build-info
-          filters:
-            branches:
-              only: master
-
-      - develop_u18:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - build-info
-          filters:
-            branches:
-              only: master
-
-      - develop_c9:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - build-info
-          filters:
-            branches:
-              only: master
-
-      - develop_c8:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - build-info
-          filters:
-            branches:
-              only: master
-
-      - publish_packages:
-          requires:
-            - develop_u24
-            - develop_u22
-            - develop_u20
-            - develop_u18
-            - develop_c9
-            - develop_c8
-          context:
-            - docker-dev-registry
-            - nexus-dev-artifactory
-          filters:
-            branches:
-              only: master
-
-  # ---------------------------------------------------------------------------
-  # main workflow: all non-master branches. Approval-gated build + OCI upload.
-  # ---------------------------------------------------------------------------
-  main:
-    jobs:
-      - build:
-          type: approval
-          filters:
-            branches:
-              ignore: master
-
-      - checkout:
-          requires:
-            - build
-          context:
-            - docker-dev-registry
-          filters:
-            branches:
-              ignore: master
-
-      - build_u24:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - oracle
-          filters:
-            branches:
-              ignore: master
-
-      - build_u22:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - oracle
-          filters:
-            branches:
-              ignore: master
-
-      - build_u20:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - oracle
-          filters:
-            branches:
-              ignore: master
-
-      - build_u18:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - oracle
-          filters:
-            branches:
-              ignore: master
-
-      - build_c9:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - oracle
-          filters:
-            branches:
-              ignore: master
-
-      - build_c8:
-          requires:
-            - checkout
-          context:
-            - docker-dev-registry
-            - oracle
-          filters:
-            branches:
-              ignore: master
-
-      - deploy_s3_hold:
-          type: approval
-          requires:
-            - build_u24
-            - build_u22
-            - build_u20
-            - build_u18
-            - build_c9
-            - build_c8
-          filters:
-            branches:
-              ignore: master
-
-      - deploy_s3:
-          context:
-            - oracle
-          requires:
-            - deploy_s3_hold
-          filters:
-            branches:
-              ignore: master
+         - deploy_s3:
+            context:
+               - oracle
+            requires:
+               - deploy_s3_hold
+            filters:
+              branches:
+                ignore: zimbra/master
