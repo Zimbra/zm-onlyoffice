@@ -242,6 +242,8 @@ workflows:
          - checkout:
             requires:
              - build
+            context:
+             - docker-dev-registry
             filters:
               branches:
                 ignore: zimbra/master
