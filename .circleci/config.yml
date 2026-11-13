@@ -8,14 +8,13 @@ parameters:
 
 ############################################################################
 references:
-  # Triggered for any feature/test branch that is NOT 'zimbra/master'
+  # Change "zimbra/master" to your test branch name (e.g. "test") while testing
   when_non_develop_workflow: &when_non_develop_workflow
     or:
       - equal: [ api, << pipeline.trigger_source >> ]
       - not:
           equal: [ << pipeline.git.branch >>, "test" ]
 
-  # Triggered when commits are pushed/merged to active branch 'zimbra/master'
   when_develop_workflow: &when_develop_workflow
     and:
       - equal: [ << pipeline.git.branch >>, "test" ]
@@ -38,12 +37,77 @@ references:
             - zm-pkg-tool
             - zm-nexus
 
-  build_job_steps: &build_job_steps
+  # --- Develop Workflow Steps: Ubuntu develop-snapshot ---
+  build_and_isolate_ubuntu: &build_and_isolate_ubuntu
     steps:
       - attach_workspace:
           at: ..
       - run:
-          name: Creating build & packages
+          name: Creating Packages (Ubuntu develop-snapshot)
+          command: |
+            cp Makefile.build Makefile.build.orig
+            sed -i 's|--pkg-release=1 |--pkg-release=1~develop-snapshot |' Makefile.build
+            echo "=== Modified Makefile.build for Ubuntu develop-snapshot ==="
+            grep pkg-release Makefile.build
+
+            make -f Makefile.build ONLY_OFFICE_URL="<< pipeline.parameters.onlyoffice_tar_url >>"
+
+            mv Makefile.build.orig Makefile.build
+          no_output_timeout: 30m
+      - run:
+          name: Isolate artifacts into platform-specific directory
+          command: |
+            echo "Using PLATFORM_TAG=${PLATFORM_TAG}"
+            mkdir -p build/dist_workspace/${PLATFORM_TAG}
+            find build/dist/ -type f -name "*.deb" -exec mv {} build/dist_workspace/${PLATFORM_TAG}/ \;
+            echo "=== build/dist_workspace/${PLATFORM_TAG} contents ==="
+            ls -la build/dist_workspace/${PLATFORM_TAG}/
+      - store_artifacts:
+          path: build/dist_workspace
+      - persist_to_workspace:
+          root: ..
+          paths:
+            - zm-onlyoffice/build/dist_workspace
+
+  # --- Develop Workflow Steps: CentOS/Rocky develop-snapshot ---
+  build_and_isolate_c8c9: &build_and_isolate_c8c9
+    steps:
+      - attach_workspace:
+          at: ..
+      - run:
+          name: Creating Packages (CentOS/Rocky develop-snapshot)
+          command: |
+            cp Makefile.build Makefile.build.orig
+            sed -i 's|--pkg-release=1 |--pkg-release=1_develop_snapshot |' Makefile.build
+            echo "=== Modified Makefile.build for CentOS/Rocky develop-snapshot ==="
+            grep pkg-release Makefile.build
+
+            make -f Makefile.build ONLY_OFFICE_URL="<< pipeline.parameters.onlyoffice_tar_url >>"
+
+            mv Makefile.build.orig Makefile.build
+          no_output_timeout: 30m
+      - run:
+          name: Isolate artifacts into platform-specific directory
+          command: |
+            echo "Using PLATFORM_TAG=${PLATFORM_TAG}"
+            mkdir -p build/dist_workspace/${PLATFORM_TAG}
+            find build/dist/ -type f -name "*.x86_64.rpm" -exec mv {} build/dist_workspace/${PLATFORM_TAG}/ \;
+            echo "=== build/dist_workspace/${PLATFORM_TAG} contents ==="
+            ls -la build/dist_workspace/${PLATFORM_TAG}/
+      - store_artifacts:
+          path: build/dist_workspace
+      - persist_to_workspace:
+          root: ..
+          paths:
+            - zm-onlyoffice/build/dist_workspace
+
+  # --- Non-Develop Workflow Steps: Standard release without snapshot suffix ---
+  build_creation_steps_non_develop: &build_creation_steps_non_develop
+    steps:
+      - attach_workspace:
+          at: ..
+      - run:
+          name: Creating Packages (Standard release)
           command: |
             make -f Makefile.build ONLY_OFFICE_URL="<< pipeline.parameters.onlyoffice_tar_url >>"
           no_output_timeout: 30m
@@ -62,6 +126,7 @@ references:
           paths:
             - zm-onlyoffice/build/dist_workspace
 
+  # --- Nexus Publish Steps (From zm-third-party-mfa reference) ---
   publish_packages_job_steps: &publish_packages_job_steps
     steps:
       - attach_workspace:
@@ -111,7 +176,7 @@ jobs:
     resource_class: small
     <<: *checkout_job_steps
 
-  # 5 Target OS Platform Builds
+  # --- Develop Workflow Jobs (develop-snapshot packages) ---
   build_u24:
     working_directory: ~/zm-onlyoffice
     shell: /bin/bash -eo pipefail
@@ -123,7 +188,7 @@ jobs:
     resource_class: medium
     environment:
       PLATFORM_TAG: u24
-    <<: *build_job_steps
+    <<: *build_and_isolate_ubuntu
 
   build_u22:
     working_directory: ~/zm-onlyoffice
@@ -136,7 +201,7 @@ jobs:
     resource_class: medium
     environment:
       PLATFORM_TAG: u22
-    <<: *build_job_steps
+    <<: *build_and_isolate_ubuntu
 
   build_u20:
     working_directory: ~/zm-onlyoffice
@@ -149,7 +214,7 @@ jobs:
     resource_class: medium
     environment:
       PLATFORM_TAG: u20
-    <<: *build_job_steps
+    <<: *build_and_isolate_ubuntu
 
   build_c9:
     working_directory: ~/zm-onlyoffice
@@ -162,7 +227,7 @@ jobs:
     resource_class: medium
     environment:
       PLATFORM_TAG: c9
-    <<: *build_job_steps
+    <<: *build_and_isolate_c8c9
 
   build_c8:
     working_directory: ~/zm-onlyoffice
@@ -175,9 +240,8 @@ jobs:
     resource_class: medium
     environment:
       PLATFORM_TAG: c8
-    <<: *build_job_steps
+    <<: *build_and_isolate_c8c9
 
-  # Nexus Publish Job (zm-third-party-mfa standard)
   publish_packages:
     working_directory: ~/zm-onlyoffice
     shell: /bin/bash -eo pipefail
@@ -190,7 +254,72 @@ jobs:
     resource_class: small
     <<: *publish_packages_job_steps
 
-  # Non-develop S3 Upload Job
+  # --- Non-Develop Workflow Jobs (Standard packages without develop-snapshot) ---
+  build_u24_non_develop:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-24.04
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: u24
+    <<: *build_creation_steps_non_develop
+
+  build_u22_non_develop:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: u22
+    <<: *build_creation_steps_non_develop
+
+  build_u20_non_develop:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-20.04
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: u20
+    <<: *build_creation_steps_non_develop
+
+  build_c9_non_develop:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-9
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: c9
+    <<: *build_creation_steps_non_develop
+
+  build_c8_non_develop:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-8
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: c8
+    <<: *build_creation_steps_non_develop
+
   upload_to_s3:
     working_directory: ~/zm-onlyoffice
     shell: /bin/bash -eo pipefail
@@ -200,7 +329,6 @@ jobs:
 workflows:
   version: 2
 
-  # Active branch workflow for 'zimbra/master'
   develop-workflow:
     when: *when_develop_workflow
     jobs:
@@ -233,7 +361,7 @@ workflows:
             - checkout
           context:
             - docker-dev-registry
-      # Approval Gate before Nexus upload
+      # Approval Gate before Nexus Artifactory publish
       - hold_nexus_push:
           type: approval
           requires:
@@ -249,7 +377,6 @@ workflows:
             - docker-dev-registry
             - nexus-dev-artifactory
 
-  # Non-develop workflow for test/feature branches
   non-develop-workflow:
     when: *when_non_develop_workflow
     jobs:
@@ -261,27 +388,27 @@ workflows:
           context:
             - docker-dev-registry
             - nexus-dev-artifactory
-      - build_u24:
+      - build_u24_non_develop:
           requires:
             - checkout
           context:
             - docker-dev-registry
-      - build_u22:
+      - build_u22_non_develop:
           requires:
             - checkout
           context:
             - docker-dev-registry
-      - build_u20:
+      - build_u20_non_develop:
           requires:
             - checkout
           context:
             - docker-dev-registry
-      - build_c9:
+      - build_c9_non_develop:
           requires:
             - checkout
           context:
             - docker-dev-registry
-      - build_c8:
+      - build_c8_non_develop:
           requires:
             - checkout
           context:
@@ -290,11 +417,11 @@ workflows:
       - upload_to_s3_hold:
           type: approval
           requires:
-            - build_u24
-            - build_u22
-            - build_u20
-            - build_c9
-            - build_c8
+            - build_u24_non_develop
+            - build_u22_non_develop
+            - build_u20_non_develop
+            - build_c9_non_develop
+            - build_c8_non_develop
       - upload_to_s3:
           context:
             - oracle
