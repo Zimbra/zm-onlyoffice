@@ -13,11 +13,11 @@ references:
     or:
       - equal: [ api, << pipeline.trigger_source >> ]
       - not:
-          equal: [ << pipeline.git.branch >>, "test" ]
+          equal: [ << pipeline.git.branch >>, "test2" ]
 
   when_develop_workflow: &when_develop_workflow
     and:
-      - equal: [ << pipeline.git.branch >>, "test" ]
+      - equal: [ << pipeline.git.branch >>, "test2" ]
       - not:
           equal: [ api, << pipeline.trigger_source >> ]
 
