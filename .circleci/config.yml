@@ -1,314 +1,303 @@
 version: 2.1
 
 ############################################################################
-
-references:
-   checkout_job_steps: &checkout_job_steps
-      steps:
-         - checkout
-         - run: 
-            name: Checking out dependencies
-            command: |
-               git clone -b develop --single-branch https://github.com/Zimbra/zm-pkg-tool.git ~/zm-pkg-tool
-               git clone -b master --single-branch https://$GITHUB_ACCESS_TOKEN@github.com/Zimbra/zm-nexus.git ~/zm-nexus
-               echo "BUILD_NO=$CIRCLE_BUILD_NUM" > config.build
-         - persist_to_workspace:
-            root: ..
-            paths:
-               - zm-onlyoffice
-               - zm-pkg-tool
-               - zm-nexus
-
-   build_job_steps: &build_job_steps
-      steps:
-         - attach_workspace:
-            at: ..
-         - run:
-            name: Creating build
-            command: make -f Makefile.build
-            no_output_timeout: 30m
-         - store_artifacts:
-            path: build/dist
-         - persist_to_workspace:
-            root: ..
-            paths: zm-onlyoffice/build/dist/*
-
-   deploy_s3_job_steps: &deploy_s3_job_steps
-      docker:
-         - image: 'cimg/python:3.10'
-      resource_class: small
-      steps:
-         - attach_workspace:
-            at: ..
-         - run:
-             name: Create a zip file for artifacts and upload them to the OCI bucket
-             command: |
-               cd build/dist/
-               zip -r $CIRCLE_PROJECT_REPONAME.zip .
-               ZIP_FILE_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/$CIRCLE_BRANCH-$CIRCLE_BUILD_NUM/archives/$CIRCLE_PROJECT_REPONAME.zip"
-               curl -X PUT "$OCI_PAR_URL$ZIP_FILE_PATH" -T $CIRCLE_PROJECT_REPONAME.zip
-               echo "artifacts uploaded to $ZIP_FILE_PATH"
-
-   publish_packages_job_steps: &publish_packages_job_steps
-      steps:
-         - attach_workspace:
-            at: ..
-         - run:
-            name: Publish package artifacts to Nexus
-            command: |
-              sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl
-              bash ../zm-nexus/scripts/publish-packages-to-nexus.sh "build/dist"
-
-   std_filters: &std_filters
-      filters:
-         branches:
-            only:
-               - master
-               - develop
-               - zimbra/master
+parameters:
+  onlyoffice_tar_url:
+    type: string
+    default: "https://files.zimbra.com/downloads/onlyoffice/u14/zimbra-onlyoffice-v7.2.2.56.tar.gz"
 
 ############################################################################
+references:
+  # Triggered for any feature/test branch that is NOT 'zimbra/master'
+  when_non_develop_workflow: &when_non_develop_workflow
+    or:
+      - equal: [ api, << pipeline.trigger_source >> ]
+      - not:
+          equal: [ << pipeline.git.branch >>, "test" ]
 
+  # Triggered when commits are pushed/merged to active branch 'zimbra/master'
+  when_develop_workflow: &when_develop_workflow
+    and:
+      - equal: [ << pipeline.git.branch >>, "test" ]
+      - not:
+          equal: [ api, << pipeline.trigger_source >> ]
+
+  checkout_job_steps: &checkout_job_steps
+    steps:
+      - checkout
+      - run:
+          name: Checkout build dependencies
+          command: |
+            git clone -b develop --single-branch https://github.com/Zimbra/zm-pkg-tool.git ~/zm-pkg-tool
+            git clone -b master --single-branch https://${GITHUB_ACCESS_TOKEN}:@github.com/Zimbra/zm-nexus.git ~/zm-nexus
+            echo "BUILD_NO=$CIRCLE_BUILD_NUM" > config.build
+      - persist_to_workspace:
+          root: ..
+          paths:
+            - zm-onlyoffice
+            - zm-pkg-tool
+            - zm-nexus
+
+  build_job_steps: &build_job_steps
+    steps:
+      - attach_workspace:
+          at: ..
+      - run:
+          name: Creating build & packages
+          command: |
+            make -f Makefile.build ONLY_OFFICE_URL="<< pipeline.parameters.onlyoffice_tar_url >>"
+          no_output_timeout: 30m
+      - run:
+          name: Isolate artifacts into platform-specific directory
+          command: |
+            echo "Using PLATFORM_TAG=${PLATFORM_TAG}"
+            mkdir -p build/dist_workspace/${PLATFORM_TAG}
+            find build/dist/ -type f \( -name "*.deb" -o -name "*.x86_64.rpm" \) -exec mv {} build/dist_workspace/${PLATFORM_TAG}/ \;
+            echo "=== build/dist_workspace/${PLATFORM_TAG} contents ==="
+            ls -la build/dist_workspace/${PLATFORM_TAG}/
+      - store_artifacts:
+          path: build/dist_workspace
+      - persist_to_workspace:
+          root: ..
+          paths:
+            - zm-onlyoffice/build/dist_workspace
+
+  publish_packages_job_steps: &publish_packages_job_steps
+    steps:
+      - attach_workspace:
+          at: ..
+      - run:
+          name: Publish package artifacts to Nexus
+          command: |
+            sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl
+
+            mkdir -p build/dist_flat
+            while IFS= read -r f; do
+              tag="$(basename "$(dirname "$f")")"
+              mkdir -p "build/dist_flat/${tag}"
+              cp "$f" "build/dist_flat/${tag}/"
+            done < <(find build/dist_workspace/ -type f \( -name "*.deb" -o -name "*.x86_64.rpm" \))
+
+            echo "=== Flat dist ready for Nexus upload ==="
+            find build/dist_flat -type f | sort
+
+            bash ../zm-nexus/scripts/publish-packages-to-nexus.sh "build/dist_flat"
+
+  upload_s3_job_steps: &upload_s3_job_steps
+    docker:
+      - image: 'cimg/python:3.10'
+    resource_class: small
+    steps:
+      - attach_workspace:
+          at: ..
+      - run:
+          name: Create a zip file for artifacts and upload them to the OCI bucket
+          command: |
+            zip -r $CIRCLE_PROJECT_REPONAME.zip build/dist_workspace
+            ZIP_FILE_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/$CIRCLE_BRANCH-$CIRCLE_BUILD_NUM/archives/$CIRCLE_PROJECT_REPONAME.zip"
+            curl -X PUT "$OCI_PAR_URL$ZIP_FILE_PATH" -T $CIRCLE_PROJECT_REPONAME.zip
+            echo "artifacts uploaded to $ZIP_FILE_PATH"
+
+############################################################################
 jobs:
-   checkout:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      docker:
-         - image: zimbra/zm-base-os:core-ubuntu
-      resource_class: small
-      <<: *checkout_job_steps
-
-   build_u24:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      docker:
-         - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-24.04
-           auth:
-            username: $DOCKER_USER
-            password: $DOCKER_PASS
-      resource_class: small
-      <<: *build_job_steps
-
-   build_u22:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      docker:
-         - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
-           auth:
-            username: $DOCKER_USER
-            password: $DOCKER_PASS
-      resource_class: small
-      <<: *build_job_steps
-
-   build_u20:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      docker:
-         - image: zimbra/zm-base-os:devcore-ubuntu-20.04
-      resource_class: small
-      <<: *build_job_steps
-
-   build_u18:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      docker:
-         - image: zimbra/zm-base-os:devcore-ubuntu-18.04
-      resource_class: small
-      <<: *build_job_steps
-
-   build_c9:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      docker:
-         - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-9
-           auth:
-            username: $DOCKER_USER
-            password: $DOCKER_PASS
-      resource_class: small
-      <<: *build_job_steps
-
-   build_c8:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      docker:
-         - image: zimbra/zm-base-os:devcore-centos-8
-      resource_class: small
-      <<: *build_job_steps
-
-   deploy_s3:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      <<: *deploy_s3_job_steps
-
-   publish_packages:
-      working_directory: ~/zm-onlyoffice
-      shell: /bin/bash -eo pipefail
-      circleci_ip_ranges: true
-      docker:
+  checkout:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
       - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
         auth:
           username: $DOCKER_USER
           password: $DOCKER_PASS
-      resource_class: small
-      <<: *publish_packages_job_steps
+    resource_class: small
+    <<: *checkout_job_steps
+
+  # 5 Target OS Platform Builds
+  build_u24:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-24.04
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: u24
+    <<: *build_job_steps
+
+  build_u22:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: u22
+    <<: *build_job_steps
+
+  build_u20:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-20.04
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: u20
+    <<: *build_job_steps
+
+  build_c9:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-9
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: c9
+    <<: *build_job_steps
+
+  build_c8:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-centos-8
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: medium
+    environment:
+      PLATFORM_TAG: c8
+    <<: *build_job_steps
+
+  # Nexus Publish Job (zm-third-party-mfa standard)
+  publish_packages:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    circleci_ip_ranges: true
+    docker:
+      - image: $DOCKER_REGISTRY/zm-base-os:devcore-ubuntu-22.04
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    resource_class: small
+    <<: *publish_packages_job_steps
+
+  # Non-develop S3 Upload Job
+  upload_to_s3:
+    working_directory: ~/zm-onlyoffice
+    shell: /bin/bash -eo pipefail
+    <<: *upload_s3_job_steps
 
 ############################################################################
-
 workflows:
-   version: 2
+  version: 2
 
-   # ----------------------------------------------------------------------------------------
-   # only for zimbra/master branch: checkout -> build (all OS) -> publish_packages_to_nexus
-   # no manual approval, no S3 deploy
-   # ----------------------------------------------------------------------------------------
-   zimbra-master-workflow:
-      jobs:
-         - checkout:
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                only: zimbra/master
-         - build_u24:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                only: zimbra/master
-         - build_u22:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                only: zimbra/master
-         - build_u20:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                only: zimbra/master
-         - build_u18:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                only: zimbra/master
-         - build_c9:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                only: zimbra/master
-         - build_c8:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                only: zimbra/master
-         - publish_packages:
-            context:
-               - docker-dev-registry
-               - nexus-dev-artifactory
-            requires:
-               - build_u24
-               - build_u22
-               - build_u20
-               - build_u18
-               - build_c9
-               - build_c8
-            filters:
-              branches:
-                only: zimbra/master
+  # Active branch workflow for 'zimbra/master'
+  develop-workflow:
+    when: *when_develop_workflow
+    jobs:
+      - checkout:
+          context:
+            - docker-dev-registry
+            - nexus-dev-artifactory
+      - build_u24:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      - build_u22:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      - build_u20:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      - build_c9:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      - build_c8:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      # Approval Gate before Nexus upload
+      - hold_nexus_push:
+          type: approval
+          requires:
+            - build_u24
+            - build_u22
+            - build_u20
+            - build_c9
+            - build_c8
+      - publish_packages:
+          requires:
+            - hold_nexus_push
+          context:
+            - docker-dev-registry
+            - nexus-dev-artifactory
 
-   # ----------------------------------------------------------------------------------
-   # all other branches: approval -> checkout -> build -> deploy_s3
-   # ----------------------------------------------------------------------------------
-   other-branches-workflow:
-      jobs:
-         - build:
-            type: approval
-            filters:
-              branches:
-                ignore: zimbra/master
-         - checkout:
-            requires:
-             - build
-            context:
-             - docker-dev-registry
-            filters:
-              branches:
-                ignore: zimbra/master
-         - build_u24:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                ignore: zimbra/master
-         - build_u22:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                ignore: zimbra/master
-         - build_u20:
-            requires:
-               - checkout
-            filters:
-              branches:
-                ignore: zimbra/master
-         - build_u18:
-            requires:
-               - checkout
-            filters:
-              branches:
-                ignore: zimbra/master
-         - build_c9:
-            requires:
-               - checkout
-            context:
-               - docker-dev-registry
-            filters:
-              branches:
-                ignore: zimbra/master
-         - build_c8:
-            requires:
-               - checkout
-            filters:
-              branches:
-                ignore: zimbra/master
-         - deploy_s3_hold:
-            type: approval
-            requires:
-               - build_u24
-               - build_u22
-               - build_u20
-               - build_u18
-               - build_c9
-               - build_c8
-            filters:
-              branches:
-                ignore: zimbra/master
-         - deploy_s3:
-            context:
-               - oracle
-            requires:
-               - deploy_s3_hold
-            filters:
-              branches:
-                ignore: zimbra/master
+  # Non-develop workflow for test/feature branches
+  non-develop-workflow:
+    when: *when_non_develop_workflow
+    jobs:
+      - generate:
+          type: approval
+      - checkout:
+          requires:
+            - generate
+          context:
+            - docker-dev-registry
+            - nexus-dev-artifactory
+      - build_u24:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      - build_u22:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      - build_u20:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      - build_c9:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      - build_c8:
+          requires:
+            - checkout
+          context:
+            - docker-dev-registry
+      # Approval Gate before S3 / OCI bucket upload
+      - upload_to_s3_hold:
+          type: approval
+          requires:
+            - build_u24
+            - build_u22
+            - build_u20
+            - build_c9
+            - build_c8
+      - upload_to_s3:
+          context:
+            - oracle
+            - docker-dev-registry
+          requires:
+            - upload_to_s3_hold
