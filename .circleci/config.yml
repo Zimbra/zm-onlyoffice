@@ -17,7 +17,7 @@ references:
   when_develop_workflow: &when_develop_workflow
     and:
       - not: << pipeline.parameters.compile_tarball >>
-      - equal: [ << pipeline.git.branch >>, "cicd-draft" ]
+      - equal: [ << pipeline.git.branch >>, "develop" ]
       - not:
           equal: [ api, << pipeline.trigger_source >> ]
 
@@ -27,7 +27,7 @@ references:
       - or:
           - equal: [ api, << pipeline.trigger_source >> ]
           - not:
-              equal: [ << pipeline.git.branch >>, "cicd-draft" ]
+              equal: [ << pipeline.git.branch >>, "develop" ]
 
   checkout_job_steps: &checkout_job_steps
     steps:
